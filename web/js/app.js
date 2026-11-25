@@ -16,11 +16,12 @@ const fmtDate = k => new Date(k + 'T00:00').toLocaleDateString('en-GB', { weekda
 const hash = s => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
 const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-const GOAL = CFG.DAILY_GOAL || 10;
 const CL = window.Cloud || { configured: false };
 let CLOUD = false, TMDB_LIVE = false;
 const bg = f => { if (!CLOUD) return; Promise.resolve().then(f).catch(e => { console.warn(e); toast('Sync error: ' + (e.message || e)); }); };
-const XP = { swipe: 5, explore: 10, goal: 50, friend: 20, send: 5, keep: 10, watch: 15, rate: 10, plan: 25, vote: 5, onboard: 50 };
+/* XP comes from only four things */
+const XP = { send: 10, keep: 20, watch: 15, plan: 25 };
+const XP_RULES = [['Send a film to a friend', XP.send], ['Keep a friend streak for the day (you both sent one)', XP.keep], ['Mark a title as watched', XP.watch], ['Create a movie night', XP.plan]];
 
 /* ---------- device preferences: theme + CRT effect ---------- */
 const PKEY = 'cinematch-prefs';
@@ -93,7 +94,7 @@ function seedExchange(u, fid) {
 }
 function createUser(name, email, pass, provider) {
   let id; do { id = 'CM-' + (1000 + Math.floor(Math.random() * 9000)); } while (DB.users[id]);
-  const hist = {}; for (let i = 1; i <= 4; i++) hist[dkey(addDays(new Date(), -i))] = GOAL + (i % 3);
+  const hist = {};
   const u = DB.users[id] = {
     id, name, email: (email || '').toLowerCase(), pass, provider, color: '#9D0208', genres: [],
     likes: [], skips: [], hist, friends: ['CM-2048', 'CM-7731', 'CM-5190', 'CM-3307'], watched: {}, seen: {}, ratings: {}, xp: 0, xpKeys: {}, ex: {}, inboxDone: {},
@@ -133,8 +134,8 @@ $('#lvup').onclick = () => $('#lvup').classList.remove('on');
 
 /* ---------- personal daily streak (swipe goal) ---------- */
 const todayCount = u => u.hist[today()] || 0;
+const flames = u => u.friends.reduce((a, f) => a + (U(f) ? fstreak(u, f) : 0), 0);
 function runOf(test) { let d = test(0) ? 0 : 1, n = 0; while (test(d) && n < 999) { n++; d++; } return n; }
-const streak = u => runOf(d => (u.hist[dkey(addDays(new Date(), -d))] || 0) >= GOAL);
 const matches = (a, b) => a.likes.filter(x => b.likes.includes(x) && M[x]);
 
 /* ---------- friend streaks: both send a film on the same day (Snapchat-style) ---------- */
@@ -418,7 +419,7 @@ function showOnboard(edit) {
 function obBtn() { const n = obSel.size, b = $('#obGo'); b.disabled = n < 3; b.textContent = n < 3 ? `Pick ${3 - n} more` : obEdit ? 'Save genres' : `Continue with ${n} genres`; }
 $('#obGo').onclick = () => {
   const u = me(); u.genres = [...obSel]; save(); bg(() => CL.updateProfile({ genres: u.genres }));
-  route(); if (!obEdit) { gain(XP.onboard, 'onboard'); toast('Welcome bonus: +50 XP'); } else { go('profile'); toast('Genres updated'); }
+  route(); if (obEdit) { go('profile'); toast('Genres updated'); }
 };
 
 /* ---------- discover: deck & swipe ---------- */
@@ -446,10 +447,10 @@ function renderDeck() {
   renderPills(); maybeHint();
 }
 function renderPills() {
-  const u = me(); if (!u) return; const n = todayCount(u), L = lvl(u.xp || 0);
+  const u = me(); if (!u) return; const L = lvl(u.xp || 0), waiting = inbox(u).length;
   $('#lvPill').innerHTML = `${ic('bolt')}Lv ${L.l}`;
-  $('#stPill').innerHTML = `${ic('flame')}${streak(u)}`;
-  $('#dSub').textContent = n >= GOAL ? `Daily goal done · ${n} swiped today` : `${n}/${GOAL} today · ${GOAL - n} to go`;
+  $('#stPill').innerHTML = `${ic('flame')}${flames(u)}`;
+  $('#dSub').textContent = waiting ? `${pl(waiting, 'film', 'films')} from friends waiting` : 'Right = want it · Left = skip';
 }
 $('#lvPill').onclick = $('#stPill').onclick = () => progressSheet();
 const topCard = () => deck.querySelector('.card:last-child');
@@ -480,11 +481,8 @@ function like(id, dir, viaDeck) {
   (dir > 0 ? u.likes : u.skips).push(id);
   bg(() => CL.swipe(id, dir, today()));
   const before = todayCount(u); u.hist[today()] = before + 1; save();
-  let xp = claimed('sw:' + id) ? 0 : XP.swipe, msg = '';
-  if (dir > 0 && !fit(m).length && !claimed('ex:' + id)) { xp += XP.explore; u.xpKeys['ex:' + id] = 1; msg = `Explorer bonus: new genre ${m.g[0]}`; }
-  if (xp) gain(xp, 'sw:' + id);
-  if (before + 1 === GOAL) { gain(XP.goal, 'goal:' + today()); msg = `Daily goal done! Streak: ${pl(streak(u), 'day', 'days')}`; }
-  else if (dir > 0) { const f = u.friends.map(U).find(f => f && f.likes.includes(id)); if (f) msg = `It's a match with ${first(f)}: ${m.t}`; }
+  let msg = '';
+  if (dir > 0) { const f = u.friends.map(U).find(f => f && f.likes.includes(id)); if (f) msg = `It's a match with ${first(f)}: ${m.t}`; }
   return msg;
 }
 function record(id, dir) {
@@ -615,7 +613,7 @@ function pickFilmSheet(fid) {
       box.style.display = q ? '' : 'none'; box.innerHTML = CATALOG.filter(m => norm(m.t).includes(q)).slice(0, 8).map(m => row({ m, why: m.g.join(' · ') })).join('') || '<div class="row muted">Nothing found.</div>'; bind(box); });
   });
 }
-function renderBadge() { const u = me(), n = u ? inbox(u).length : 0, d = $('#inboxDot'); d.hidden = !n; d.textContent = n; }
+function renderBadge() { const u = me(), n = u ? inbox(u).length : 0, d = $('#inboxDot'); d.hidden = !n; d.textContent = n; renderPills(); }
 
 /* ---------- progress sheet: streak + level ---------- */
 function levelBlock(u) {
@@ -624,22 +622,19 @@ function levelBlock(u) {
   <div class="xpbar"><i style="width:${L.cur / L.need * 100}%"></i></div><div class="small" style="margin-top:6px">${L.cur} / ${L.need} XP to level ${L.l + 1} · ${u.xp || 0} XP total</div></div></div>`;
 }
 function progressSheet() {
-  const u = me(), n = todayCount(u), s = streak(u), p = Math.min(1, n / GOAL), C = 2 * Math.PI * 48;
-  const week = [...Array(7)].map((_, i) => { const d = addDays(new Date(), i - 6), full = (u.hist[dkey(d)] || 0) >= GOAL;
-    return `<div class="day">${d.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 2)}<span class="dot ${full ? 'full' : ''} ${i === 6 ? 'today' : ''}">${full ? ic('flame') : ''}</span></div>`; }).join('');
-  const fr = u.friends.map(U).filter(Boolean).map(f => ({ f, st: fstate(u, f.id) })).sort((a, b) => b.st.s - a.st.s).slice(0, 3);
-  openSheet(`<div class="shead"><b>Your progress</b></div>
+  const u = me(), total = flames(u);
+  const fr = u.friends.map(U).filter(Boolean).map(f => ({ f, st: fstate(u, f.id) })).sort((a, b) => (b.st.risk - a.st.risk) || b.st.s - a.st.s);
+  openSheet(`<div class="shead"><b>Your flames</b></div>
   <div class="group" style="margin-top:10px"><div class="ringbox">
-   <svg class="ring" viewBox="0 0 112 112"><circle cx="56" cy="56" r="48" fill="none" stroke="var(--surface2)" stroke-width="11"/><circle cx="56" cy="56" r="48" fill="none" stroke="var(--accent)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}" transform="rotate(-90 56 56)"/><text x="56" y="56" text-anchor="middle" font-size="26" font-weight="800" fill="currentColor">${n}</text><text x="56" y="75" text-anchor="middle" font-size="12" fill="currentColor" opacity=".6">of ${GOAL}</text></svg>
-   <div><div class="big">${pl(s, 'day', 'days')}</div><div class="sub">${n >= GOAL ? 'Swipe goal done. See you tomorrow.' : `Swipe ${GOAL - n} more to keep your streak.`}</div></div>
-  </div><div class="week">${week}</div></div>
-  <div class="group" style="margin-top:12px">${levelBlock(u)}</div>
+   <span class="badge" style="width:72px;height:72px">${ic('flame')}</span>
+   <div><div class="big">${total}</div><div class="sub">${total ? 'Flames from all your friend streaks. Send each other a film every day to keep them.' : 'Send a friend a film and get one back the same day to light your first flame.'}</div></div>
+  </div></div>
   <h2>Friend streaks</h2>
-  <div class="group">${fr.map(({ f, st }) => `<div class="row">${av(f)}<div class="grow"><div class="t">${esc(f.name)}</div><div class="status ${st.cls}">${esc(st.label)}</div></div>${fsPill(st)}</div>`).join('') || '<div class="row muted">Add friends to start streaks.</div>'}</div>
-  <button class="btn alt wide" id="toFr" style="margin-top:12px">See all friends</button>
+  <div class="group">${fr.map(({ f, st }) => `<button class="row" data-pf="${esc(f.id)}">${av(f)}<div class="grow"><div class="t">${esc(f.name)}</div><div class="status ${st.cls}">${esc(st.label)}</div></div>${fsPill(st)}</button>`).join('') || '<div class="row muted">Add friends to start streaks.</div>'}</div>
+  <div class="group" style="margin-top:12px">${levelBlock(u)}</div>
   <h2>How to earn XP</h2>
-  <div class="group rules">${[['Swipe a title', XP.swipe], ['Like a title from a new genre', XP.explore], ['Hit the daily swipe goal', XP.goal], ['Send a film to a friend', XP.send], ['Keep a friend streak for the day', XP.keep], ['Add a friend', XP.friend], ['Mark a title as watched', XP.watch], ['Rate a title', XP.rate], ['Create a movie night', XP.plan], ['Vote in a plan', XP.vote]].map(([t, x]) => `<div class="row"><span class="grow">${t}</span><b>+${x}</b></div>`).join('')}</div>`,
-  () => { $('#toFr').onclick = () => { closeSheet(); go('friends'); }; });
+  <div class="group rules">${XP_RULES.map(([t, x]) => `<div class="row"><span class="grow">${t}</span><b>+${x}</b></div>`).join('')}</div>`,
+  () => { $$('[data-pf]').forEach(b => b.onclick = () => pickFilmSheet(b.dataset.pf)); });
 }
 
 /* ---------- friends ---------- */
@@ -704,12 +699,12 @@ function renderFriendList() {
 }
 async function addFriend(handle) {
   if (CLOUD) {
-    try { const f = await CL.addFriend(handle); await reloadCloud(); gain(XP.friend, 'fr:' + f.id); toast(`${f.name} added. Send a film to start a streak`); renderResults(); }
+    try { const f = await CL.addFriend(handle); await reloadCloud(); toast(`${f.name} added. Send a film to start a streak`); renderResults(); }
     catch (e) { toast(e.message); renderResults(); }
     return;
   }
   const id = handle, u = me(); if (u.friends.includes(id) || id === u.id || !U(id)) return;
-  u.friends.push(id); save(); gain(XP.friend, 'fr:' + id); toast(`${U(id).name} added. Send a film to start a streak`);
+  u.friends.push(id); save(); toast(`${U(id).name} added. Send a film to start a streak`);
   renderResults(); renderFriendList();
 }
 function friendSheet(fid) {
@@ -874,7 +869,7 @@ function renderPlan() {
   ${CLOUD ? '' : `<p class="small" style="margin:10px 4px">Friends' votes are simulated in demo mode.</p>`}`;
   $('#newEv').onclick = () => openTogether();
   $$('#strip [data-day]').forEach(b => b.onclick = () => { const k = b.dataset.day; if (byDate[k]) $('#ev-' + byDate[k][0].id).scrollIntoView({ behavior: RM.matches ? 'auto' : 'smooth', block: 'start' }); else openTogether([], k); });
-  $$('[data-vote]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.closest('.ev').dataset.ev); ev.votes[u.id] = b.dataset.vote; ev.winner = null; save(); bg(() => CL.vote(ev.id, b.dataset.vote)); renderPlan(); gain(XP.vote, 'vote:' + ev.id); });
+  $$('[data-vote]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.closest('.ev').dataset.ev); ev.votes[u.id] = b.dataset.vote; ev.winner = null; save(); bg(() => CL.vote(ev.id, b.dataset.vote)); renderPlan(); });
   $$('[data-decide]').forEach(b => b.onclick = () => decide(u.events.find(e => e.id === b.dataset.decide)));
   $$('[data-del]').forEach(b => b.onclick = () => { const did = b.dataset.del; u.events = u.events.filter(e => e.id !== did); save(); bg(() => CL.deleteEvent(did)); renderPlan(); toast('Plan deleted'); });
 }
@@ -951,7 +946,7 @@ function renderProfile() {
   $$('[data-s]').forEach(b => b.onclick = () => { setSeen(b.dataset.s, !u.seen[b.dataset.s]); renderProfile(); });
   $$('[data-r]').forEach(b => b.onclick = () => {
     const id = b.dataset.r, n = +b.dataset.n; if (!u.seen[id]) return toast('Mark it as watched first, then rate it');
-    u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id])); if (u.ratings[id]) gain(XP.rate, 'rate:' + id); renderProfile();
+    u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id])); renderProfile();
   });
 }
 

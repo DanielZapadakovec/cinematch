@@ -27,7 +27,5 @@ window.CINEMATCH_CONFIG = {
   TMDB_REGION: 'SK',
 
   // Google sign-in: the *Web* OAuth client ID from Google Cloud (also used by the Android app)
-  GOOGLE_WEB_CLIENT_ID: '',
-
-  DAILY_GOAL: 10                // swipes per day to keep a streak
+  GOOGLE_WEB_CLIENT_ID: ''
 };
