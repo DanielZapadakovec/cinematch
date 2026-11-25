@@ -1,0 +1,24 @@
+# Read-only health check of the Supabase backend (no secrets used; only the public key from config.js).
+name: Diagnose backend
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/diagnose.yml']
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Supabase
+        env:
+          URL: https://mjauqshyvahdhzleluuj.supabase.co
+          KEY: sb_publishable_Xnmb1ve5R1Og1O87ytIo2Q_GSDcmRz5
+        run: |
+          probe() { echo "== $1"; curl -s -m 20 -o /tmp/b -w "HTTP %{http_code}\n" "${@:2}"; head -c 400 /tmp/b; echo; }
+          probe "auth health" -H "apikey: $KEY" "$URL/auth/v1/health"
+          probe "auth settings" -H "apikey: $KEY" "$URL/auth/v1/settings"
+          for t in profiles friendships swipes watched film_sends events event_guests votes xp_log; do
+            probe "table $t" -H "apikey: $KEY" "$URL/rest/v1/$t?select=*&limit=1"
+          done
+          probe "rpc gain_xp (expect not signed in)" -X POST -H "apikey: $KEY" -H "content-type: application/json" -d '{"reward_key":"x","amount":1}' "$URL/rest/v1/rpc/gain_xp"
+          probe "tmdb function, apikey header" -H "apikey: $KEY" "$URL/functions/v1/tmdb?path=/trending/movie/week"
+          probe "tmdb function, CORS preflight" -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: apikey" "$URL/functions/v1/tmdb?path=/trending/movie/week"
