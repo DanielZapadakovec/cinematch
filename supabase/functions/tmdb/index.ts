@@ -1,7 +1,9 @@
 // CineMatch → TMDB proxy. Keeps the TMDB key on the server.
-// Secret needed: TMDB_READ_TOKEN (TMDB "API Read Access Token", v4).
+// Secret needed: TMDB_READ_TOKEN = the long "API Read Access Token" (v4).
+// The short v3 "API Key" also works.
 // Call: GET <project>/functions/v1/tmdb?path=/trending/movie/week&language=en-US
-const TOKEN = Deno.env.get("TMDB_READ_TOKEN") ?? "";
+const TOKEN = (Deno.env.get("TMDB_READ_TOKEN") ?? "").trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
+const IS_V3 = /^[0-9a-f]{32}$/i.test(TOKEN);
 const ALLOWED = /^\/(trending\/(movie|tv|all)\/(day|week)|movie\/(popular|top_rated|now_playing|upcoming|\d+)|tv\/(popular|top_rated|on_the_air|\d+)|discover\/(movie|tv)|search\/(movie|tv|multi)|genre\/(movie|tv)\/list)$/;
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -17,7 +19,10 @@ Deno.serve(async (req) => {
   if (!TOKEN) return Response.json({ error: "TMDB_READ_TOKEN secret is not set" }, { status: 500, headers: cors });
   const target = new URL("https://api.themoviedb.org/3" + path);
   url.searchParams.forEach((v, k) => { if (k !== "path") target.searchParams.set(k, v); });
-  const r = await fetch(target, { headers: { Authorization: `Bearer ${TOKEN}`, accept: "application/json" } });
+  if (IS_V3) target.searchParams.set("api_key", TOKEN);
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (!IS_V3) headers.Authorization = `Bearer ${TOKEN}`;
+  const r = await fetch(target, { headers });
   return new Response(await r.text(), {
     status: r.status,
     headers: { ...cors, "content-type": "application/json", "cache-control": "public, max-age=3600" },

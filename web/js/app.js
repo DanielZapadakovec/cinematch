@@ -41,7 +41,7 @@ setCatalog(DATA.MOVIES);
 async function loadCatalog() {
   if (!TMDB.enabled) return;
   try { const list = await TMDB.loadCatalog(); if (list.length) { setCatalog(list); TMDB_LIVE = true; } }
-  catch (e) { setTimeout(() => toast('TMDB unavailable, using the demo catalog'), 2200); }
+  catch (e) { console.warn(e); setTimeout(() => toast('TMDB unavailable (' + e.message + '), using the demo catalog'), 2600); }
 }
 
 /* ---------- icons: icons/*.svg override the inline fallback sprite ---------- */

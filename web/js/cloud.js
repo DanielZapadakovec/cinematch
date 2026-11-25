@@ -12,7 +12,9 @@ window.Cloud = (() => {
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' }
   }));
   const ok = ({ data, error }) => { if (error) throw new Error(error.message || String(error)); return data; };
-  const redirect = () => location.origin + location.pathname;
+  const native = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  // links in emails must open a real web page, not the app's internal https://localhost
+  const redirect = () => native() || /^(https?:\/\/localhost|capacitor:)/.test(location.origin) ? (C.WEB_URL || location.origin) : location.origin + location.pathname;
 
   async function reachable() {
     try {

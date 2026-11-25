@@ -14,6 +14,9 @@ window.CINEMATCH_CONFIG = {
   SUPABASE_URL: 'https://mjauqshyvahdhzleluuj.supabase.co',
   SUPABASE_KEY: 'sb_publishable_Xnmb1ve5R1Og1O87ytIo2Q_GSDcmRz5',
 
+  // Public web version (GitHub Pages). Email confirmation and password links open here.
+  WEB_URL: 'https://danielzapadakovec.github.io/cinematch/',
+
   // TMDB goes through the Supabase Edge Function "tmdb" (supabase/functions/tmdb),
   // which holds the TMDB_READ_TOKEN secret. Until it is deployed the demo catalog is used.
   USE_TMDB: true,

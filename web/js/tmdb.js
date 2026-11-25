@@ -33,7 +33,7 @@ window.TMDB = (() => {
     Object.entries(all).forEach(([k, v]) => v !== '' && url.searchParams.set(k, v));
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
     const res = await fetch(url, { headers, signal: ctl.signal }); clearTimeout(t);
-    if (!res.ok) throw new Error('TMDB ' + res.status);
+    if (!res.ok) { let m = ''; try { const j = await res.json(); m = j.status_message || j.error || ''; } catch (e) {} throw new Error('TMDB ' + res.status + (m ? ': ' + m : '')); }
     return res.json();
   }
 

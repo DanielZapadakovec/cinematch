@@ -8,14 +8,22 @@ Do these steps once, in this order.
 2. Paste everything from [`supabase/migrations/0001_cinematch.sql`](supabase/migrations/0001_cinematch.sql) → **Run**.
    It should finish with “Success. No rows returned”.
 
-## 2. Sign-in settings (1 min)
-Supabase → **Authentication**:
-* **Sign In / Providers → Email**: for testing you can turn **Confirm email** off, so new accounts can sign in at once.
-  Leave it on later for real users (they get a confirmation link).
-* **URL Configuration → Redirect URLs**: add `https://localhost/*` (Android app) and the address where you host the web version, if any.
+If you see `relation "profiles" already exists`, the script had already run. Then run only
+[`supabase/migrations/0002_grants.sql`](supabase/migrations/0002_grants.sql) (safe to repeat).
+
+## 2. Web version + sign-in links (2 min)
+1. GitHub → repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+   Then **Actions → Web (GitHub Pages) → Run workflow**. The web app appears at
+   https://danielzapadakovec.github.io/cinematch/
+2. Supabase → **Authentication → URL Configuration**:
+   * **Site URL**: `https://danielzapadakovec.github.io/cinematch/`
+   * **Redirect URLs**: add `https://danielzapadakovec.github.io/cinematch/**`
+3. **Sign In / Providers → Email**: for testing you can turn **Confirm email** off, so new accounts can sign in at once.
+   With it on, the confirmation link opens the web version; afterwards sign in in the app too.
 
 ## 3. TMDB through an Edge Function (3 min)
-1. Supabase → **Edge Functions → Secrets** → add `TMDB_READ_TOKEN` = your TMDB *API Read Access Token* (the long one).
+1. Supabase → **Edge Functions → Secrets** → add `TMDB_READ_TOKEN` = your TMDB *API Read Access Token*
+   (TMDB → Settings → API, the long one starting with `eyJ`). The short API Key works too after redeploying the latest function code.
 2. **Edge Functions → Deploy a new function → Via editor**, name it exactly `tmdb`,
    paste [`supabase/functions/tmdb/index.ts`](supabase/functions/tmdb/index.ts) → **Deploy**.
 3. Open the function → **Details / Settings** → turn **Verify JWT** (Enforce JWT verification) **off** → Save.
