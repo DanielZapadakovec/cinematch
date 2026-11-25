@@ -1,0 +1,22 @@
+{
+  "appId": "sk.cinematch.app",
+  "appName": "CineMatch",
+  "webDir": "web",
+  "android": {
+    "backgroundColor": "#03071E",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 600,
+      "launchAutoHide": true,
+      "backgroundColor": "#03071E",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "DARK",
+      "backgroundColor": "#03071E"
+    }
+  }
+}

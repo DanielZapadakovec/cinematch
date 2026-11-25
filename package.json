@@ -1,0 +1,32 @@
+{
+  "name": "cinematch",
+  "version": "0.3.0",
+  "private": true,
+  "description": "CineMatch: swipe films, send picks to friends, keep streaks, plan movie nights.",
+  "scripts": {
+    "serve": "npx http-server web -p 8000 -c-1",
+    "icons": "python3 tools/build_icons.py --inline",
+    "assets": "npx @capacitor/assets generate --android --iconBackgroundColor '#03071E' --iconBackgroundColorDark '#03071E' --splashBackgroundColor '#03071E' --splashBackgroundColorDark '#03071E'",
+    "android:add": "npx cap add android",
+    "sync": "npx cap sync android",
+    "open": "npx cap open android",
+    "apk": "npx cap sync android && cd android && ./gradlew assembleDebug",
+    "apk:release": "npx cap sync android && cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/haptics": "^7.0.0",
+    "@capacitor/share": "^7.0.0",
+    "@capacitor/splash-screen": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.0.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource/vt323": "^5.3.0",
+    "@phosphor-icons/core": "^2.1.1"
+  }
+}

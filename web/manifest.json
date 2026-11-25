@@ -1,0 +1,15 @@
+{
+  "name": "CineMatch",
+  "short_name": "CineMatch",
+  "description": "Swipe films and series, match with friends and plan movie nights.",
+  "start_url": "./#discover",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#03071E",
+  "theme_color": "#03071E",
+  "icons": [
+    { "src": "icons/app-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/app-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/app-icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
