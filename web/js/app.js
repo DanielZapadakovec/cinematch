@@ -432,7 +432,7 @@ function cardHTML(m) {
   <div class="ttl" style="margin-top:10px">${esc(m.t)}</div>
   <div class="attrs">${ic(m.k === 'Series' ? 'tv' : 'film')} <b>${esc(m.k)}</b> · ${esc(m.g.join(' / '))} · ${esc(m.y)}${m.len ? ' · ' + esc(m.len) : ''} · ${ic('star-fill')} <b>${esc(m.r)}</b></div>
   <div class="dsc">${esc(m.d)}</div></div>
-  <span class="stamp yes">WANT</span><span class="stamp no">SKIP</span></div>`;
+  <span class="stamp yes">WANT</span><span class="stamp no">SKIP</span><span class="stamp sn">SEEN IT</span></div>`;
 }
 function depth(el, i, p) { const d = Math.max(0, i - p); el.style.transform = `translate3d(0,0,0) scale(${1 - d * .06})`; el.querySelector('.dim').style.opacity = Math.min(1, d) * .6; }
 function renderDeck() {
@@ -461,7 +461,7 @@ function paint() {
   if (hinting) $('#hand').style.transform = `translateX(${cx * .9}px) rotate(${cx / W * 20}deg)`;
   const p = Math.min(1, Math.abs(cx) / (W * .4));
   el.querySelector('.stamp.yes').style.opacity = cx > 0 ? p : 0; el.querySelector('.stamp.no').style.opacity = cx < 0 ? p : 0;
-  [...deck.querySelectorAll('.card')].reverse().slice(1).forEach((c, i) => depth(c, i + 1, Math.min(1, Math.abs(cx) / (W * .9))));
+  [...deck.querySelectorAll('.card')].reverse().slice(1).forEach((c, i) => depth(c, i + 1, Math.min(1, Math.max(Math.abs(cx) / (W * .9), cy < 0 ? -cy / (deck.clientHeight * .9) : 0))));
 }
 function animateTo(tx, ty, vx, vy, damping, response, done) {
   anim && anim.stop(); let fin = false;
@@ -491,10 +491,29 @@ function record(id, dir) {
   if (msg) toast(msg);
   renderFriends(); renderProfile();
 }
+let lastTap = null, tapT = 0;
+function commitSeen() {
+  const el = topCard(); if (!el || busy) return; busy = true; stopHint(); N.haptic('MEDIUM');
+  const id = el.dataset.id; el.classList.remove('info');
+  el.querySelector('.stamp.sn').style.opacity = 1;
+  let fin = false;
+  const done = () => {
+    if (fin) return; fin = true; anim && anim.stop();
+    like(id, 1, true); setSeen(id, true); undoStack.push({ id, dir: 1, seen: true }); queue.shift(); renderDeck();
+    toast(`${M[id].t} added to watched`); renderFriends(); renderProfile();
+  };
+  if (RM.matches) { el.style.transition = 'opacity .2s'; el.style.opacity = 0; setTimeout(done, 250); return; }
+  setTimeout(() => {
+    const H = deck.clientHeight; anim && anim.stop();
+    anim = spring({ from: cy, to: -H * 1.4, velocity: -1600, damping: 1, response: .45, onUpdate: v => { cy = v; paint(); if (cy < -H * 1.05) done(); }, onDone: done });
+  }, 260);
+}
 function undo() {
   const h = undoStack.pop(); if (!h) return; const u = me(), arr = h.dir > 0 ? u.likes : u.skips;
-  arr.splice(arr.lastIndexOf(h.id), 1); bg(() => CL.unswipe(h.id)); u.hist[today()] = Math.max(0, todayCount(u) - 1); save();
-  queue.unshift(h.id); renderDeck(); rotSign = 1; cx = h.dir * deck.clientWidth * 1.3; cy = -20; paint();
+  arr.splice(arr.lastIndexOf(h.id), 1); bg(() => CL.unswipe(h.id)); if (h.seen) setSeen(h.id, false); u.hist[today()] = Math.max(0, todayCount(u) - 1); save();
+  queue.unshift(h.id); renderDeck(); rotSign = 1;
+  if (h.seen) { cx = 0; cy = -deck.clientHeight * 1.2; } else { cx = h.dir * deck.clientWidth * 1.3; cy = -20; }
+  paint();
   animateTo(0, 0, 0, 0, .85, .45); renderFriends(); renderProfile();
 }
 deck.addEventListener('pointerdown', e => {
@@ -510,7 +529,18 @@ deck.addEventListener('pointermove', e => {
 });
 const up = e => {
   if (!drag) return; const d = drag; drag = null;
-  if (!d.moved) { if (e.type === 'pointerup') d.el.classList.toggle('info'); if (cx || cy) animateTo(0, 0, 0, 0, 1, .4); return; }
+  if (!d.moved) {
+    if (cx || cy) animateTo(0, 0, 0, 0, 1, .4);
+    if (e.type !== 'pointerup') return;
+    /* one tap = details, two quick taps = add to watched */
+    const now = performance.now();
+    if (lastTap && lastTap.el === d.el && now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40) {
+      clearTimeout(tapT); lastTap = null; commitSeen(); return;
+    }
+    lastTap = { el: d.el, t: now, x: e.clientX, y: e.clientY };
+    clearTimeout(tapT); tapT = setTimeout(() => { if (lastTap && lastTap.el === d.el) d.el.classList.toggle('info'); lastTap = null; }, 300);
+    return;
+  }
   const v = d.t.vel(), W = deck.clientWidth, proj = cx + v.x * .2;
   if (Math.abs(proj) > W * .45 && Math.sign(proj) === Math.sign(cx || proj)) commit(Math.sign(proj), v.x, v.y);
   else animateTo(0, 0, v.x, v.y, Math.hypot(v.x, v.y) > 600 ? .75 : 1, .4);
