@@ -233,7 +233,7 @@ function tracker() {
   };
 }
 document.addEventListener('pointerdown', e => {
-  const el = e.target.closest('.btn,.chip,.cb,.tab,.pill,.iconbtn,.swatch,.cand,.gtile,.together,.add,.seen,.row[data-f],.cal .d,.strip button,.rec[data-pick]');
+  const el = e.target.closest('.btn,.chip,.cb,.tab,.pill,.iconbtn,.swatch,.lrow,.cand,.gtile,.together,.add,.seen,.row[data-f],.cal .d,.strip button,.rec[data-pick]');
   if (!el || el.disabled) return; el.classList.add('press');
   const off = () => { el.classList.remove('press'); removeEventListener('pointerup', off); removeEventListener('pointercancel', off); };
   addEventListener('pointerup', off); addEventListener('pointercancel', off);
@@ -284,6 +284,7 @@ function setMode(m) {
   mode = m; $('#segIn').classList.toggle('on', m === 'in'); $('#segUp').classList.toggle('on', m === 'up');
   $('#fName').style.display = m === 'up' ? '' : 'none'; $('#authBtn').textContent = m === 'up' ? 'Create account' : 'Sign in'; $('#authErr').textContent = '';
 }
+$('#pwEye').onclick = () => { const f = $('#fPass'), show = f.type === 'password'; f.type = show ? 'text' : 'password'; const b = $('#pwEye'); b.setAttribute('aria-pressed', show); b.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); b.innerHTML = ic(show ? 'eye-off' : 'eye'); f.focus(); };
 $('#segIn').onclick = () => setMode('in'); $('#segUp').onclick = () => setMode('up');
 $('#authForm').addEventListener('submit', async e => {
   e.preventDefault();
@@ -329,7 +330,7 @@ async function nativeGoogle() {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
   const hashed = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
   await P.initialize({ google: { webClientId: CFG.GOOGLE_WEB_CLIENT_ID } });
-  const r = await P.login({ provider: 'google', options: { scopes: ['email', 'profile'], nonce: hashed } });
+  const r = await P.login({ provider: 'google', options: { nonce: hashed } });
   const token = r && r.result && r.result.idToken;
   if (!token) throw new Error('Google did not return a sign-in token.');
   await CL.googleIdToken(token, raw);
@@ -432,9 +433,9 @@ function showOnboard(edit) {
   obEdit = edit; obSel = new Set(edit ? me().genres : []);
   $('.steps').style.display = edit ? 'none' : '';
   $('#obTitle').textContent = edit ? 'Edit your genres' : `Hi ${me().name.split(' ')[0]}, what do you love to watch?`;
-  $('#gen').innerHTML = DATA.GENRES.map(g => { const n = CATALOG.filter(m => m.g.includes(g)).length;
-    return `<button class="gtile ${obSel.has(g) ? 'on' : ''}" data-g="${esc(g)}">${ic('check')}<span>${esc(g)}</span><small>${pl(n, 'title', 'titles')}</small></button>`; }).join('');
-  $$('#gen .gtile').forEach(b => b.onclick = () => { const g = b.dataset.g; obSel.has(g) ? obSel.delete(g) : obSel.add(g); b.classList.toggle('on'); obBtn(); });
+  $('#gen').innerHTML = DATA.GENRES.map(g => {
+    return `<button class="gtile ${obSel.has(g) ? 'on' : ''}" data-g="${esc(g)}" aria-pressed="${obSel.has(g)}">${ic('g-' + g.toLowerCase())}<span>${esc(g)}</span></button>`; }).join('');
+  $$('#gen .gtile').forEach(b => b.onclick = () => { const g = b.dataset.g; obSel.has(g) ? obSel.delete(g) : obSel.add(g); b.classList.toggle('on'); b.setAttribute('aria-pressed', obSel.has(g)); N.haptic('LIGHT'); obBtn(); });
   obBtn(); show('onboard'); $('#s-onboard .auth').scrollTop = 0;
 }
 function obBtn() { const n = obSel.size, b = $('#obGo'); b.disabled = n < 3; b.textContent = n < 3 ? `Pick ${3 - n} more` : obEdit ? 'Save genres' : `Continue with ${n} genres`; }
@@ -461,8 +462,15 @@ function renderDeck() {
   const ids = queue.slice(0, 2);
   $('#bSend').disabled = !ids.length; $('#bUndo').disabled = !undoStack.length;
   if (!ids.length) {
-    deck.innerHTML = `<div class="empty">${ic('popcorn')}<b>End of the reel</b><span class="muted">You've seen the whole deck. Send a pick to a friend or plan a movie night.</span><button class="btn" id="eGo">${ic('group-plus')}Watch together</button></div>`;
-    $('#eGo').onclick = () => openTogether(); return renderPills();
+    const skipped = me().skips.filter(id => M[id]).length;
+    deck.innerHTML = `<div class="empty">${ic('popcorn')}<b>End of the reel</b><span class="muted">${TMDB_LIVE ? 'You have swiped everything loaded so far.' : 'You have seen the whole demo catalog.'}</span>
+     ${TMDB_LIVE ? `<button class="btn" id="eMore">${ic('refresh')}Load more titles</button>` : ''}
+     ${skipped ? `<button class="btn alt" id="eSkip">${ic('undo')}Give ${pl(skipped, 'skipped title', 'skipped titles')} another look</button>` : ''}
+     <button class="btn alt" id="eGo">${ic('group-plus')}Plan a movie night</button></div>`;
+    $('#eGo').onclick = () => openTogether();
+    if ($('#eMore')) $('#eMore').onclick = async () => { const b = $('#eMore'); b.disabled = true; b.innerHTML = `${ic('refresh')}Loading…`; await topUp(true); renderDeck(); };
+    if ($('#eSkip')) $('#eSkip').onclick = () => { queue = me().skips.filter(id => M[id]).reverse(); renderDeck(); };
+    return renderPills();
   }
   ids.slice().reverse().forEach((id, ri) => { const i = ids.length - 1 - ri, el = document.createElement('div'); el.className = 'card'; el.dataset.id = id; el.innerHTML = cardHTML(M[id]); depth(el, i, 0); deck.appendChild(el); });
   renderPills(); maybeHint();
@@ -496,9 +504,28 @@ function commit(dir, vx = 0, vy = 0) {
   if (RM.matches) { el.style.transition = 'opacity .2s'; el.style.opacity = 0; setTimeout(() => record(el.dataset.id, dir), 200); return; }
   animateTo(dir * (W * 1.5 + 80), cy + vy * .12, vx || dir * 1600, vy, 1, .45, () => record(el.dataset.id, dir));
 }
+/* keep the deck topped up from TMDB, by the user's genres */
+let morePage = 1, moreBusy = false;
+async function topUp(force) {
+  if (!TMDB_LIVE || moreBusy || (!force && queue.length > 5)) return false;
+  moreBusy = true;
+  try {
+    for (let tries = 0; tries < 3; tries++) {
+      morePage++;
+      const fresh = (await TMDB.more(morePage, me().genres || [])).filter(m => !M[m.id]);
+      if (!fresh.length) continue;
+      setCatalog([...CATALOG, ...fresh]);
+      const u = me(), seen = new Set([...u.likes, ...u.skips]), add = fresh.filter(m => !seen.has(m.id)).map(m => m.id);
+      queue.push(...add); if (add.length) return true;
+    }
+    return false;
+  } catch (e) { if (force) toast('Could not load more: ' + e.message); return false; }
+  finally { moreBusy = false; }
+}
 function like(id, dir, viaDeck) {
   const u = me(), m = M[id];
-  if (!viaDeck) { u.likes = u.likes.filter(x => x !== id); u.skips = u.skips.filter(x => x !== id); queue = queue.filter(x => x !== id); }
+  u.likes = u.likes.filter(x => x !== id); u.skips = u.skips.filter(x => x !== id);
+  if (!viaDeck) queue = queue.filter(x => x !== id);
   (dir > 0 ? u.likes : u.skips).push(id);
   bg(() => CL.swipe(id, dir, today()));
   const before = todayCount(u); u.hist[today()] = before + 1; save();
@@ -509,6 +536,7 @@ function like(id, dir, viaDeck) {
 function record(id, dir) {
   const msg = like(id, dir, true);
   undoStack.push({ id, dir }); queue.shift(); renderDeck();
+  if (queue.length <= 5) topUp().then(added => { if (added && deck.querySelectorAll('.card').length < 2) renderDeck(); });
   if (msg) toast(msg);
   renderFriends(); renderProfile();
 }
@@ -624,6 +652,17 @@ grab.addEventListener('pointerdown', e => { sAnim && sAnim.stop(); grab.setPoint
 grab.addEventListener('pointermove', e => { if (!sDrag) return; sDrag.t.add(0, e.clientY); const raw = e.clientY - sDrag.s; sy = raw < 0 ? rubber(raw, 120) : raw; sPaint(); });
 const sUp = () => { if (!sDrag) return; const v = sDrag.t.vel().y; sDrag = null; if (sy + v * .2 > sH() * .4) closeSheet(v); else sTo(0, v, .8, .3); };
 grab.addEventListener('pointerup', sUp); grab.addEventListener('pointercancel', sUp);
+{
+  const body = $('#sheetBody'); let st = null;
+  body.addEventListener('touchstart', e => { const t = e.touches[0]; st = { x: t.clientX, y: t.clientY, on: false, tr: tracker(), top: body.scrollTop <= 0 }; st.tr.add(0, t.clientY); }, { passive: true });
+  body.addEventListener('touchmove', e => {
+    if (!st || !st.top) return; const t = e.touches[0], dy = t.clientY - st.y, dx = t.clientX - st.x; st.tr.add(0, t.clientY);
+    if (!st.on) { if (dy > 8 && dy > Math.abs(dx) && body.scrollTop <= 0) { st.on = true; sAnim && sAnim.stop(); st.base = t.clientY; } else if (Math.abs(dy) > 8 || Math.abs(dx) > 8) { st.top = false; return; } else return; }
+    e.preventDefault(); sy = Math.max(0, t.clientY - st.base); sPaint();
+  }, { passive: false });
+  const end = () => { if (!st) return; const on = st.on, v = st.tr.vel().y; st = null; if (!on) return; if (sy + v * .2 > sH() * .35) closeSheet(v); else sTo(0, v, .8, .3); };
+  body.addEventListener('touchend', end); body.addEventListener('touchcancel', end);
+}
 addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); $('#lvup').classList.remove('on'); } });
 
 let tt; function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2800); }
@@ -721,7 +760,7 @@ function renderResults() {
 }
 function paintResults(res) {
   const u = me(), box = $('#fres'); if (!box || !u) return;
-  box.innerHTML = `<div class="group">${res.map(x => `<div class="row">${av(x)}<div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(x.handle || x.id)}</div></div>${u.friends.includes(x.id) ? '<span class="small">Friend</span>' : `<button class="btn sm" data-add="${esc(x.handle || x.id)}">${ic('plus')}Add</button>`}</div>`).join('') || `<div class="row muted">No one found for “${esc(fq)}”. ${CLOUD ? 'Ask your friend for their ID (CM-1234).' : 'Try Nina or CM-6612.'}</div>`}</div>`;
+  box.innerHTML = `<div class="group">${res.map(x => `<div class="row">${av(x)}<div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(x.handle || x.id)}</div></div>${u.friends.includes(x.id) ? '<span class="small">Friend</span>' : `<button class="btn sm" data-add="${esc(x.handle || x.id)}">${ic('plus')}Add</button>`}</div>`).join('') || `<div class="row muted">No one found for “${esc(fq.trim())}”</div>`}</div>`;
   box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { b.disabled = true; addFriend(b.dataset.add); });
 }
 function renderInbox() {
@@ -956,23 +995,23 @@ const isSolo = e => !e.guests.length && e.cands.length === 1;
 const soloPlan = (u, id) => u.events.find(e => isSolo(e) && e.cands[0] === id && e.date >= today());
 const fmtShort = k => new Date(k + 'T00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 function libLists(u) {
-  const all = [...new Set([...u.likes, ...Object.keys(u.seen || {})])].filter(id => M[id]);
-  return { want: all.filter(id => !u.seen[id]), rate: all.filter(id => u.seen[id] && !u.ratings[id]), seen: all.filter(id => u.seen[id]) };
+  const order = [...u.likes].reverse(), seenIds = Object.keys(u.seen || {}).reverse();
+  const all = [...new Set([...order, ...seenIds])].filter(id => M[id]);
+  const want = all.filter(id => !u.seen[id]).sort((a, b) => (soloPlan(u, b) ? 1 : 0) - (soloPlan(u, a) ? 1 : 0));
+  return { want, rate: all.filter(id => u.seen[id] && !u.ratings[id]), seen: all.filter(id => u.seen[id]) };
+}
+const PAGE = 30;
+let libShown = PAGE, libObs = null;
+const stars = (id, r, live) => `<span class="stars ${live ? '' : 'ro'}" aria-label="Rating ${r} of 5">${[1, 2, 3, 4, 5].map(i => live ? `<button data-r="${id}" data-n="${i}" aria-label="${i} stars">${ic(i <= r ? 'star-fill' : 'star')}</button>` : ic(i <= r ? 'star-fill' : 'star')).join('')}</span>`;
+function libRow(u, id) {
+  const m = M[id], s = !!u.seen[id], r = u.ratings[id] || 0, plan = !s && soloPlan(u, id);
+  const extra = s ? stars(id, r, libF === 'rate') : plan ? `<span class="planned">${ic('calendar')}${fmtShort(plan.date)}</span>` : '';
+  return `<div class="lrow" data-mv="${id}" role="button" tabindex="0"><span class="mini">${poster(m)}</span><span class="grow"><span class="t">${esc(m.t)}</span><span class="s">${esc(m.k)} · ${esc(m.y)} · ${esc(m.g[0])}</span>${extra}</span>${ic('chevron', 'muted')}</div>`;
 }
 function renderProfile() {
   const u = me(); if (!u) return; u.seen = u.seen || {}; u.ratings = u.ratings || {};
-  const L = libLists(u), list = L[libF];
+  const L = libLists(u);
   const rated = Object.values(u.ratings).filter(Boolean), avg = rated.length ? (rated.reduce((a, r) => a + r, 0) / rated.length).toFixed(1) : '–';
-  const groups = {}; list.forEach(id => { const g = M[id].g[0]; (groups[g] = groups[g] || []).push(id); });
-  const order = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
-  const empty = { want: 'Swipe right on titles you want to see.', rate: 'Nothing to rate. Watched titles without stars land here.', seen: 'Double-tap a poster, or tap the eye on a title, to fill this list.' }[libF];
-  const tip = { want: 'Hold a title to put it in your calendar.', rate: 'Tap the stars to rate.', seen: '' }[libF];
-  const row = id => {
-    const m = M[id], s = !!u.seen[id], r = u.ratings[id] || 0, plan = !s && soloPlan(u, id);
-    return `<div class="row ${s ? '' : 'lp'}" ${s ? '' : `data-lp="${id}"`}><span class="mini">${poster(m)}</span><div class="grow"><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.y)}</div>
-      ${s ? `<div class="stars" aria-label="Rating">${[1, 2, 3, 4, 5].map(i => `<button data-r="${id}" data-n="${i}" aria-label="${i} stars">${ic(i <= r ? 'star-fill' : 'star')}</button>`).join('')}</div>` : plan ? `<div class="planned">${ic('calendar')}${fmtShort(plan.date)}</div>` : ''}</div>
-      <div class="acts">${s ? `<button class="add on" data-s="${id}" aria-label="Watched, tap to undo">${ic('check')}</button>` : `<button class="add" data-s="${id}" aria-label="Mark as watched">${ic('eye')}</button><button class="add ${plan ? 'on' : ''}" data-plan="${id}" aria-label="Plan in calendar">${ic('calendar')}</button>`}<button class="add" data-sendm="${id}" aria-label="Send to a friend">${ic('send')}</button></div></div>`;
-  };
   $('#v-profile').innerHTML = `<div class="top" style="align-items:center"><h1>Profile</h1><button class="iconbtn" id="gear" aria-label="Settings">${ic('gear')}</button></div>
   <div class="phead">${av(u, 'lg')}<div><div class="pn">${esc(u.name)}</div><div class="small">${esc(u.handle || u.id)}${u.provider === 'google' ? ' · Google' : ''}</div></div></div>
   <button class="group" id="pLvl" style="width:100%;text-align:left;display:block">${levelBlock(u)}</button>
@@ -981,43 +1020,71 @@ function renderProfile() {
   <div class="chips">${(u.genres || []).map(g => `<span class="chip on">${esc(g)}</span>`).join('')}</div>
   <h2>Your library</h2>
   <div class="seg lib3">${[['want', 'Want to watch', L.want.length], ['rate', 'To rate', L.rate.length], ['seen', 'Watched', L.seen.length]].map(([k, t, n]) => `<button data-lf="${k}" class="${libF === k ? 'on' : ''}"><span class="cnt">${n}</span>${t}</button>`).join('')}</div>
-  ${tip && list.length ? `<p class="small" style="margin:8px 4px 0">${tip}</p>` : ''}
-  ${order.length ? order.map(g => `<div class="gh" style="margin:18px 4px 8px"><b>${esc(g)}</b><span class="small">${groups[g].length}</span>${(u.genres || []).includes(g) ? '' : `<span class="newg">${ic('star-fill')}New</span>`}</div>
-    <div class="group lib">${groups[g].map(row).join('')}</div>`).join('')
-    : `<div class="group" style="margin-top:12px"><div class="row muted">${empty}</div></div>`}`;
+  <div class="group lib" id="libList" style="margin-top:12px"></div><div id="libMore"></div>`;
   $('#gear').onclick = settingsSheet; $('#pLvl').onclick = progressSheet; $('#edG').onclick = () => showOnboard(true);
-  $$('[data-lf]').forEach(b => b.onclick = () => { libF = b.dataset.lf; renderProfile(); });
-  $$('#v-profile [data-sendm]').forEach(b => b.onclick = () => sendSheet(b.dataset.sendm));
-  $$('#v-profile [data-plan]').forEach(b => b.onclick = () => planSheet(b.dataset.plan));
-  $$('#v-profile [data-s]').forEach(b => b.onclick = () => { setSeen(b.dataset.s, !u.seen[b.dataset.s]); renderProfile(); });
-  $$('#v-profile [data-r]').forEach(b => b.onclick = () => {
-    const id = b.dataset.r, n = +b.dataset.n;
-    u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id])); renderProfile();
-    if (libF === 'rate' && u.ratings[id]) toast(`Rated ${M[id].t} ${n}/5 · moved to Watched`);
-  });
-  $$('#v-profile [data-lp]').forEach(r => holdable(r, () => planSheet(r.dataset.lp)));
+  $$('[data-lf]').forEach(b => b.onclick = () => { libF = b.dataset.lf; libShown = PAGE; renderProfile(); });
+  renderLib();
 }
-/* press and hold: highlight on pointer-down, fire after 480 ms unless the finger moves (scroll) */
-function holdable(el, fn) {
-  let t = 0, sx = 0, sy = 0;
-  const cancel = () => { clearTimeout(t); el.classList.remove('holding'); };
-  el.addEventListener('pointerdown', e => {
-    if (e.target.closest('button')) return; sx = e.clientX; sy = e.clientY; el.classList.add('holding');
-    t = setTimeout(() => { el.classList.remove('holding'); N.haptic('MEDIUM'); fn(); }, 480);
+function renderLib() {
+  const u = me(), list = libLists(u)[libF], box = $('#libList'), more = $('#libMore'); if (!box) return;
+  const empty = { want: 'Swipe right on titles you want to see.', rate: 'Nothing to rate. Watched titles without stars land here.', seen: 'Double-tap a poster in Discover to mark it as watched.' }[libF];
+  box.innerHTML = list.length ? list.slice(0, libShown).map(id => libRow(u, id)).join('') : `<div class="row muted">${empty}</div>`;
+  more.innerHTML = list.length > libShown ? `<button class="btn alt wide" id="libNext" style="margin-top:10px">Show more (${list.length - libShown})</button>` : '';
+  box.querySelectorAll('[data-mv]').forEach(r => {
+    r.onclick = e => { if (!e.target.closest('[data-r]')) movieSheet(r.dataset.mv); };
+    r.onkeydown = e => { if (e.key === 'Enter') movieSheet(r.dataset.mv); };
   });
-  el.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
-  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => el.addEventListener(n, cancel));
-  el.addEventListener('contextmenu', e => e.preventDefault());
+  box.querySelectorAll('[data-r]').forEach(b => b.onclick = () => rate(b.dataset.r, +b.dataset.n));
+  /* load the next page on its own when the end of the list scrolls into view */
+  if (libObs) libObs.disconnect();
+  const next = $('#libNext');
+  if (next) {
+    next.onclick = () => { libShown += PAGE; renderLib(); };
+    libObs = new IntersectionObserver(es => { if (es.some(x => x.isIntersecting)) { libShown += PAGE; renderLib(); } }, { root: $('#v-profile'), rootMargin: '300px' });
+    libObs.observe(next);
+  }
 }
-function planSheet(id) {
+function rate(id, n) {
+  const u = me(); u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id]));
+  if (libF === 'rate' && u.ratings[id]) toast(`${M[id].t}: ${n}/5 · moved to Watched`);
+  renderProfile();
+}
+/* title details: about the film, then actions */
+function movieSheet(id) {
+  const u = me(), m = M[id]; if (!m) return;
+  const draw = () => {
+    const s = !!u.seen[id], r = u.ratings[id] || 0, plan = !s && soloPlan(u, id), ov = fit(m);
+    $('#sheetBody').innerHTML = `<div class="mhero"><span class="mini xl">${poster(m)}</span><div class="grow">
+      <div class="mt">${esc(m.t)}</div>
+      <div class="attrs" style="color:var(--mute)">${esc(m.k)} · ${esc(m.y)}${m.len ? ' · ' + esc(m.len) : ''} · ${ic('star-fill')} ${esc(m.r)}</div>
+      <div class="chips" style="margin-top:8px">${m.g.map(g => `<span class="chip ${ov.includes(g) ? 'on' : ''}" style="min-height:28px">${esc(g)}</span>`).join('')}</div></div></div>
+     <p class="about">${esc(m.d || 'No description yet.')}</p>
+     ${s ? `<div class="group"><div class="row"><span class="grow t">Your rating</span>${stars(id, r, true)}</div></div>`
+         : plan ? `<div class="winner" style="margin:0">${ic('calendar')}Planned for ${fmtDate(plan.date)}</div>` : ''}
+     <div class="mact">
+      ${s ? '' : `<button class="btn wide" id="msCal">${ic('calendar')}${plan ? 'Change the date' : 'Add to calendar'}</button>`}
+      <button class="btn ${s ? '' : 'alt'} wide" id="msSeen">${ic(s ? 'check' : 'eye')}${s ? 'Watched · tap to undo' : 'Mark as watched'}</button>
+      <button class="btn alt wide" id="msSend">${ic('send')}Send to a friend</button>
+      ${plan ? `<button class="btn alt wide" id="msUnplan">Remove from calendar</button>` : ''}
+     </div>`;
+    if ($('#msCal')) $('#msCal').onclick = () => planSheet(id, true);
+    $('#msSeen').onclick = () => { setSeen(id, !u.seen[id]); if (u.seen[id] && plan) removeEvent(plan.id); renderProfile(); draw(); };
+    $('#msSend').onclick = () => sendSheet(id);
+    if ($('#msUnplan')) $('#msUnplan').onclick = () => { removeEvent(plan.id); renderProfile(); draw(); toast('Removed from your calendar'); };
+    $$('#sheetBody [data-r]').forEach(b => b.onclick = () => { rate(id, +b.dataset.n); draw(); });
+  };
+  openSheet('', draw);
+}
+function planSheet(id, fromDetails) {
   const u = me(), m = M[id], ex = soloPlan(u, id); let date = ex ? ex.date : nextSat();
-  openSheet(`<div class="shead"><b>${ex ? 'Move plan' : 'Plan to watch'}</b></div>
+  openSheet(`<div class="shead">${fromDetails ? `<button class="back" id="psBack" aria-label="Back">${ic('back')}</button>` : ''}<b>${ex ? 'Move plan' : 'Add to calendar'}</b></div>
    <div class="rec" style="padding:8px 0 12px"><span class="mini">${poster(m)}</span><div><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.g.join(' · '))}${m.len ? ' · ' + esc(m.len) : ''}</div></div></div>
    <div id="psCal"></div>
    <button class="btn wide" id="psGo" style="margin-top:14px">${ic('calendar')}${ex ? 'Move to this day' : 'Add to my calendar'}</button>
    ${ex ? `<button class="btn alt wide" id="psDel" style="margin-top:10px">Remove from calendar</button>` : ''}`, () => {
     calendar($('#psCal'), date, k => { date = k; });
     $('#psGo').onclick = () => savePlan(id, date, ex);
+    if ($('#psBack')) $('#psBack').onclick = () => movieSheet(id);
     if (ex) $('#psDel').onclick = () => { removeEvent(ex.id); closeSheet(); renderProfile(); toast('Removed from your calendar'); };
   });
 }
@@ -1028,7 +1095,7 @@ async function savePlan(id, date, ex) {
     else if (CLOUD) { const eid = await CL.createEvent(m.t.slice(0, 80), date, [id], []); await CL.setWinner(eid, id); await reloadCloud(); }
     else { u.events.push({ id: 'p' + Date.now(), title: m.t.slice(0, 80), date, host: u.id, guests: [], cands: [id], votes: {}, winner: id }); save(); }
   } catch (e) { if (btn) btn.disabled = false; return toast(e.message); }
-  closeSheet(); renderProfile(); renderPlan(); N.haptic('LIGHT'); toast(`${m.t} · ${fmtDate(date)}`);
+  renderProfile(); renderPlan(); N.haptic('LIGHT'); toast(`${m.t} · ${fmtDate(date)}`); movieSheet(id);
 }
 function removeEvent(eid) { const u = me(); u.events = u.events.filter(e => e.id !== eid); save(); bg(() => CL.deleteEvent(eid)); renderPlan(); }
 
@@ -1063,7 +1130,6 @@ function settingsSheet() {
     <div class="group" style="margin-top:10px">
      <button class="row" id="crtT">${ic('crt', 'muted')}<span class="grow"><span class="t" style="display:block">CRT effect</span><span class="s">Scanlines, glow and the refresh bar</span></span>${sw(prefs.crt)}</button>
      <button class="row" id="sndT">${ic('sound', 'muted')}<span class="grow"><span class="t" style="display:block">Sound effects</span><span class="s">A chime when you earn XP</span></span>${sw(prefs.sound !== false)}</button>
-     <button class="row" id="hintR">${ic('hand', 'muted')}<span class="grow">Show the swipe tip again</span></button>
     </div>
     <h2>Account</h2>
     <div class="group">
@@ -1084,7 +1150,6 @@ function settingsSheet() {
     $$('[data-th]').forEach(b => b.onclick = () => { prefs.theme = b.dataset.th; applyPrefs(); draw(); });
     $('#crtT').onclick = () => { prefs.crt = !prefs.crt; applyPrefs(); draw(); };
     $('#sndT').onclick = () => { prefs.sound = prefs.sound === false; applyPrefs(); SFX.unlock(); setTimeout(() => SFX.xp(), 60); draw(); };
-    $('#hintR').onclick = () => { setHintDone(false); closeSheet(); go('discover'); toast('The tip shows if you wait 3 seconds'); };
     $('#pId').onclick = () => copy(u.handle || u.id); $('#pOut').onclick = logout;
   };
   openSheet('', () => { draw(); $('#sheetBody').scrollTop = 0; });

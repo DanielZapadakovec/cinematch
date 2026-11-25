@@ -75,6 +75,19 @@ window.TMDB = (() => {
     return list.filter(m => !seen.has(m.id) && seen.add(m.id));
   }
 
+  // More titles for the deck: discover by the user's genres, page by page
+  const MOVIE_IDS = { Action: 28, Adventure: 12, Animation: 16, Comedy: 35, Crime: 80, Documentary: 99, Drama: 18, Fantasy: 14, History: 36, Horror: 27, Musical: 10402, Mystery: 9648, Romance: 10749, 'Sci-Fi': 878, Thriller: 53 };
+  const TV_IDS = { Action: 10759, Adventure: 10759, Animation: 16, Comedy: 35, Crime: 80, Documentary: 99, Drama: 18, Fantasy: 10765, History: 10768, Mystery: 9648, 'Sci-Fi': 10765 };
+  async function more(page, genres = []) {
+    const mv = [...new Set(genres.map(g => MOVIE_IDS[g]).filter(Boolean))].join('|');
+    const tv = [...new Set(genres.map(g => TV_IDS[g]).filter(Boolean))].join('|');
+    const [a, b] = await Promise.all([
+      get('/discover/movie', { page, sort_by: 'popularity.desc', 'vote_count.gte': 200, ...(mv ? { with_genres: mv } : {}) }),
+      get('/discover/tv', { page, sort_by: 'popularity.desc', 'vote_count.gte': 100, ...(tv ? { with_genres: tv } : {}) })
+    ]);
+    return [...a.results.map(i => map(i, 'movie')), ...b.results.map(i => map(i, 'tv'))].filter(m => m.poster);
+  }
+
   // Titles referenced by friends / plans that are not in the loaded lists
   async function byIds(ids) {
     const out = [];
@@ -101,5 +114,5 @@ window.TMDB = (() => {
     return m;
   }
 
-  return { enabled, get, loadCatalog, byIds, details, posterUrl };
+  return { enabled, get, loadCatalog, more, byIds, details, posterUrl };
 })();
