@@ -8,7 +8,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // CI sets these from the run number so every APK installs over the previous one
-        versionCode (System.getenv("CM_VERSION_CODE") ?: "1").toInteger()
+        versionCode Integer.parseInt(System.getenv("CM_VERSION_CODE") ?: "1")
         versionName "1.0." + (System.getenv("CM_VERSION_CODE") ?: "0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
