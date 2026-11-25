@@ -56,7 +56,10 @@ Create a keystore (`keytool -genkey -v -keystore cinematch.keystore -alias cinem
 add a `signingConfigs` block in `android/app/build.gradle`, bump `versionCode`/`versionName`, then `npm run apk:release`
 (or build an `.aab` with `./gradlew bundleRelease`).
 
-## Going live
+## Server setup
+See **[SETUP.md](SETUP.md)**: database, TMDB Edge Function, signing key and Google sign-in.
+
+## Going live (more)
 1. Keys in `web/config.js`, set `DEMO_MODE: false`.
 2. Replace `localStorage` in `web/js/app.js` (`save()` / `DB`) with a real backend. Tables:
    `users`, `friendships`, `swipes`, `ratings`, `film_sends (from, to, movie_id, sent_at)`, `events`, `votes`, `xp_log`.

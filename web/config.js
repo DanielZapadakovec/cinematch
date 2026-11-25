@@ -1,39 +1,30 @@
 /*
  * CineMatch configuration
  * -----------------------------------------------------------------------
- * Fill in the keys below when you deploy the app on your own domain.
- * While DEMO_MODE is true the app ignores every key and uses the built-in
- * demo catalog + demo accounts, so nothing here is required for testing.
- *
- * TMDB
- *   1. Create a free account at https://www.themoviedb.org/
- *   2. Settings → API → copy the "API Read Access Token" (v4, long JWT)
- *      into TMDB_READ_TOKEN  (preferred)
- *      or the short "API Key" (v3) into TMDB_API_KEY.
- *   3. Set DEMO_MODE to false.
- *   Note: a key in front-end code is visible to anyone. For production,
- *   call TMDB from your own backend / serverless function and point
- *   TMDB_PROXY_URL at it instead (the app then sends no key at all).
- *
- * GOOGLE SIGN-IN
- *   1. Google Cloud Console → APIs & Services → Credentials →
- *      Create OAuth client ID → "Web application".
- *   2. Add your site origin (e.g. https://cinematch.app) to
- *      "Authorized JavaScript origins".
- *   3. Paste the client ID into GOOGLE_CLIENT_ID.
- *   The app decodes the returned ID token only to show the name/email.
- *   Your backend must verify the token before trusting it.
+ * Accounts and data live in Supabase (setup steps: SETUP.md in the repo).
+ * The TMDB key is NOT stored here: it lives in Supabase as the secret
+ * TMDB_READ_TOKEN and the app reaches TMDB through the "tmdb" Edge Function.
  */
 window.CINEMATCH_CONFIG = {
-  DEMO_MODE: true,
+  // true  = everything stays on this device with demo friends (no server)
+  // false = real accounts in Supabase; falls back to the demo if the server can't be reached
+  DEMO_MODE: false,
 
-  TMDB_READ_TOKEN: '',          // v4 "API Read Access Token"
-  TMDB_API_KEY: '',             // v3 "API Key" (used only if no read token)
-  TMDB_PROXY_URL: '',           // optional: your backend proxy, e.g. https://api.yoursite.com/tmdb
+  // Supabase project (Project Settings → API). The publishable/anon key is meant to be public.
+  SUPABASE_URL: 'https://mjauqshyvahdhzleluuj.supabase.co',
+  SUPABASE_KEY: 'sb_publishable_Xnmb1ve5R1Og1O87ytIo2Q_GSDcmRz5',
+
+  // TMDB goes through the Supabase Edge Function "tmdb" (supabase/functions/tmdb),
+  // which holds the TMDB_READ_TOKEN secret. Until it is deployed the demo catalog is used.
+  USE_TMDB: true,
+  TMDB_PROXY_URL: '',           // empty = <SUPABASE_URL>/functions/v1/tmdb
+  TMDB_READ_TOKEN: '',          // only for running without Supabase; never commit a real token
+  TMDB_API_KEY: '',
   TMDB_LANGUAGE: 'en-US',
   TMDB_REGION: 'SK',
 
-  GOOGLE_CLIENT_ID: '',         // xxxxxxxx.apps.googleusercontent.com
+  // Google sign-in: the *Web* OAuth client ID from Google Cloud (also used by the Android app)
+  GOOGLE_WEB_CLIENT_ID: '',
 
   DAILY_GOAL: 10                // swipes per day to keep a streak
 };

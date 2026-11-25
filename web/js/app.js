@@ -17,6 +17,9 @@ const hash = s => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>>
 const norm = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const GOAL = CFG.DAILY_GOAL || 10;
+const CL = window.Cloud || { configured: false };
+let CLOUD = false, TMDB_LIVE = false;
+const bg = f => { if (!CLOUD) return; Promise.resolve().then(f).catch(e => { console.warn(e); toast('Sync error: ' + (e.message || e)); }); };
 const XP = { swipe: 5, explore: 10, goal: 50, friend: 20, send: 5, keep: 10, watch: 15, rate: 10, plan: 25, vote: 5, onboard: 50 };
 
 /* ---------- device preferences: theme + CRT effect ---------- */
@@ -37,7 +40,7 @@ const setCatalog = list => { CATALOG = list; M = Object.fromEntries(list.map(m =
 setCatalog(DATA.MOVIES);
 async function loadCatalog() {
   if (!TMDB.enabled) return;
-  try { const list = await TMDB.loadCatalog(); if (list.length) setCatalog(list); }
+  try { const list = await TMDB.loadCatalog(); if (list.length) { setCatalog(list); TMDB_LIVE = true; } }
   catch (e) { setTimeout(() => toast('TMDB unavailable, using the demo catalog'), 2200); }
 }
 
@@ -70,7 +73,7 @@ let DB;
 try { DB = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
 if (!DB || !DB.users) DB = { users: {}, session: null };
 DATA.MOCK.forEach(u => { DB.users[u.id] = { ...u, mock: true, skips: [], hist: {}, friends: [] }; });
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} };
+const save = () => { if (CLOUD) return; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} };
 const me = () => DB.users[DB.session];
 const U = id => DB.users[id];
 const first = u => u === me() ? 'you' : u.name.split(' ')[0];
@@ -108,6 +111,7 @@ function gain(n, key) {
   const u = me(); u.xpKeys = u.xpKeys || {};
   if (key) { if (u.xpKeys[key]) return 0; u.xpKeys[key] = 1; }
   if (!n) return 0;
+  if (CLOUD && key) bg(() => CL.gainXp(key, n).then(t => { if (typeof t === 'number' && me()) { me().xp = t; renderPills(); } }));
   const before = lvl(u.xp).l; u.xp = (u.xp || 0) + n; save(); floatXP(n); renderPills();
   const after = lvl(u.xp); if (after.l > before) setTimeout(() => levelUp(after), 450);
   return n;
@@ -171,17 +175,17 @@ function scheduleReply(fid) {
   }, 2400 + hash(fid) % 1800);
 }
 function sendTo(fids, id) {
-  const u = me(), k = today(), kept = [];
-  let xp = 0;
+  const u = me(), k = today(), kept = [], rewards = [];
+  bg(() => CL.send(fids, id, k));
   fids.forEach(fid => {
     const e = exGet(u, fid, k), had = e.me.length > 0;
     if (!e.me.includes(id)) e.me.push(id);
     if (!had && e.them.length) kept.push(U(fid));
-    if (!claimed('send:' + fid + ':' + k)) { u.xpKeys['send:' + fid + ':' + k] = 1; xp += XP.send; }
-    if (!had && e.them.length && !claimed('keep:' + fid + ':' + k)) { u.xpKeys['keep:' + fid + ':' + k] = 1; xp += XP.keep; }
+    rewards.push(['send:' + fid + ':' + k, XP.send]);
+    if (!had && e.them.length) rewards.push(['keep:' + fid + ':' + k, XP.keep]);
     scheduleReply(fid);
   });
-  save(); if (xp) gain(xp); N.haptic('MEDIUM');
+  save(); rewards.forEach(([key, n]) => gain(n, key)); N.haptic('MEDIUM');
   const ppl = fids.map(U).filter(Boolean);
   toast(kept.length ? `Streak kept with ${names(kept)} · ${fstreak(u, kept[0].id)} ${fstreak(u, kept[0].id) === 1 ? 'day' : 'days'}` : `Sent ${M[id].t} to ${names(ppl)}`);
   renderFriends(); renderBadge();
@@ -262,16 +266,27 @@ function setMode(m) {
   $('#fName').style.display = m === 'up' ? '' : 'none'; $('#authBtn').textContent = m === 'up' ? 'Create account' : 'Sign in'; $('#authErr').textContent = '';
 }
 $('#segIn').onclick = () => setMode('in'); $('#segUp').onclick = () => setMode('up');
-$('#authForm').addEventListener('submit', e => {
+$('#authForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const mail = $('#fMail').value.trim().toLowerCase(), pass = $('#fPass').value, name = $('#fName').value.trim();
+  const mail = $('#fMail').value.trim().toLowerCase(), pass = $('#fPass').value, name = $('#fName').value.trim(), err = $('#authErr');
+  if (CLOUD) {
+    const btn = $('#authBtn'); btn.disabled = true; err.textContent = '';
+    try {
+      if (mode === 'up') {
+        if (!name) throw new Error('Please enter your name.');
+        const r = await CL.signUp(mail, pass, name);
+        if (!r.session) err.textContent = 'Almost done: open the confirmation link we emailed you, then sign in.';
+      } else await CL.signIn(mail, pass);
+    } catch (x) { err.textContent = x.message === 'Invalid login credentials' ? 'Wrong email or password.' : x.message; }
+    btn.disabled = false; return;
+  }
   const found = Object.values(DB.users).find(u => u.email === mail);
   if (mode === 'up') {
-    if (!name) return $('#authErr').textContent = 'Please enter your name.';
-    if (found) return $('#authErr').textContent = 'This email already has an account.';
+    if (!name) return err.textContent = 'Please enter your name.';
+    if (found) return err.textContent = 'This email already has an account.';
     login(createUser(name, mail, pass, 'email'));
   } else {
-    if (!found || found.pass !== pass) return $('#authErr').textContent = found && found.provider === 'google' ? 'This account uses Google sign-in.' : 'Wrong email or password.';
+    if (!found || found.pass !== pass) return err.textContent = found && found.provider === 'google' ? 'This account uses Google sign-in.' : 'Wrong email or password.';
     login(found.id);
   }
 });
@@ -280,32 +295,114 @@ $('#demoBtn').onclick = () => {
   login(f ? f.id : createUser('Demo Viewer', 'demo@cinematch.app', 'demo', 'email'));
 };
 function login(id) { DB.session = id; save(); route(); }
-function logout() { DB.session = null; save(); closeSheet(); show('auth'); }
+function logout() {
+  closeSheet();
+  if (CLOUD) { CL.signOut().catch(() => {}); DB = { users: {}, session: null }; show('auth'); return; }
+  DB.session = null; save(); show('auth');
+}
 
-/* Google: real Google Identity Services on the web when configured, otherwise a demo account.
-   Inside the Android app use a native plugin instead (see README). */
-const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-function decodeJwt(t) { try { return JSON.parse(decodeURIComponent(escape(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { return null; } }
+/* Google: Supabase OAuth on the web, native Google sign-in (Credential Manager) inside the Android app */
+async function nativeGoogle() {
+  const P = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SocialLogin;
+  if (!P) throw new Error('Google sign-in is missing from this build.');
+  if (!CFG.GOOGLE_WEB_CLIENT_ID) throw new Error('Google sign-in is not set up yet (GOOGLE_WEB_CLIENT_ID in config.js).');
+  const raw = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+  const hashed = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+  await P.initialize({ google: { webClientId: CFG.GOOGLE_WEB_CLIENT_ID } });
+  const r = await P.login({ provider: 'google', options: { scopes: ['email', 'profile'], nonce: hashed } });
+  const token = r && r.result && r.result.idToken;
+  if (!token) throw new Error('Google did not return a sign-in token.');
+  await CL.googleIdToken(token, raw);
+}
 function googleLogin(sub, name, email) {
   let u = Object.values(DB.users).find(x => x.googleSub === sub || (email && x.email === email.toLowerCase()));
   if (!u) u = U(createUser(name, email, null, 'google'));
   u.googleSub = sub; save(); closeSheet(); login(u.id);
 }
-$('#gBtn').onclick = () => {
-  if (!CFG.DEMO_MODE && CFG.GOOGLE_CLIENT_ID && !N.native) {
-    loadScript('https://accounts.google.com/gsi/client').then(() => {
-      google.accounts.id.initialize({ client_id: CFG.GOOGLE_CLIENT_ID, callback: r => { const p = decodeJwt(r.credential); p ? googleLogin(p.sub, p.name, p.email) : toast('Google sign-in failed'); } });
-      google.accounts.id.prompt();
-    }).catch(() => toast('Could not load Google sign-in'));
+$('#gBtn').onclick = async () => {
+  if (CLOUD) {
+    $('#authErr').textContent = '';
+    try { if (N.native) await nativeGoogle(); else await CL.googleWeb(); }
+    catch (x) { $('#authErr').textContent = /cancel/i.test(x.message || '') ? '' : (x.message || 'Google sign-in failed'); }
     return;
   }
   openSheet(`<div class="shead"><b>Continue with Google</b></div>
-   <p class="sub">Demo mode. Real Google sign-in switches on when you add <code>GOOGLE_CLIENT_ID</code> in <code>config.js</code> and set <code>DEMO_MODE</code> to <code>false</code>. For now, choose the name your friends will see.</p>
+   <p class="sub">Offline demo: the server isn't reachable from here, so this creates a local demo account. Choose the name your friends will see.</p>
    <label class="l" for="gName">Display name</label><input class="field" id="gName" value="Alex Morgan" autocomplete="name">
    <button class="btn wide" id="gGo" style="margin-top:16px">${ic('google')}Continue</button>`, () => {
     $('#gGo').onclick = () => { const n = $('#gName').value.trim() || 'Google User'; googleLogin('demo-' + norm(n).replace(/\W+/g, '-'), n, norm(n).replace(/\W+/g, '.') + '@example.com'); };
   });
 };
+
+/* ---------- cloud session: load from Supabase into the same in-memory model ---------- */
+function hydrate(b, user) {
+  const uid = b.me.id, users = {};
+  const mk = p => ({ id: p.id, handle: p.handle, name: p.name, color: p.color, genres: p.genres || [], likes: [], skips: [], hist: {}, seen: {}, ratings: {}, friends: [] });
+  b.profiles.forEach(p => { users[p.id] = mk(p); });
+  const prov = user && user.app_metadata && user.app_metadata.provider;
+  const u = users[uid] = Object.assign(mk(b.me), {
+    email: (user && user.email) || '', provider: prov === 'google' ? 'google' : 'email', xp: b.me.xp, hintDone: b.me.hint_done,
+    friends: b.friends.slice(), xpKeys: Object.fromEntries(b.xpKeys.map(k => [k, 1])), ex: {}, inboxDone: {}, events: []
+  });
+  b.swipes.forEach(x => { const o = users[x.user_id]; if (!o) return; (x.dir > 0 ? o.likes : o.skips).push(x.movie_id); o.hist[x.day] = (o.hist[x.day] || 0) + 1; });
+  b.watched.forEach(w => { const o = users[w.user_id]; if (!o) return; if (w.seen) o.seen[w.movie_id] = true; if (w.rating) o.ratings[w.movie_id] = w.rating; });
+  b.sends.forEach(x => { const out = x.from_id === uid, fid = out ? x.to_id : x.from_id, e = exGet(u, fid, x.day); (out ? e.me : e.them).push(x.movie_id); if (!out && x.handled) u.inboxDone[fid + ':' + x.day + ':' + x.movie_id] = 1; });
+  u.events = b.events.map(e => ({ id: e.id, title: e.title, date: e.date, host: e.host_id, guests: e.event_guests.map(g => g.user_id), cands: e.cands, votes: Object.fromEntries(e.votes.map(v => [v.user_id, v.movie_id])), winner: e.winner }));
+  DB = { users, session: uid };
+}
+async function fillMissingTitles() {
+  if (!TMDB_LIVE) return;
+  const u = me(), ids = new Set();
+  Object.values(DB.users).forEach(x => [...x.likes, ...x.skips, ...Object.keys(x.seen || {})].forEach(i => ids.add(i)));
+  Object.values(u.ex || {}).forEach(d => Object.values(d).forEach(e => [...e.me, ...e.them].forEach(i => ids.add(i))));
+  u.events.forEach(e => e.cands.forEach(i => ids.add(i)));
+  const miss = [...ids].filter(i => !M[i]);
+  if (miss.length) { const extra = await TMDB.byIds(miss); if (extra.length) setCatalog([...CATALOG, ...extra]); }
+}
+async function loadCloud(user) {
+  const b = await CL.load(dkey(addDays(new Date(), -60)), dkey(addDays(new Date(), -14)));
+  hydrate(b, user);
+  await fillMissingTitles().catch(() => {});
+  CL.subscribe({
+    sent: async row => {
+      const u = me(); if (!u) return;
+      if (!U(row.from_id)) return reloadCloud();
+      const e = exGet(u, row.from_id, row.day); if (!e.them.includes(row.movie_id)) e.them.push(row.movie_id);
+      if (!M[row.movie_id] && TMDB_LIVE) { const extra = await TMDB.byIds([row.movie_id]); if (extra.length) setCatalog([...CATALOG, ...extra]); }
+      toast(`${first(U(row.from_id))} sent you ${M[row.movie_id] ? M[row.movie_id].t : 'a film'}`); N.haptic('LIGHT');
+      renderFriends(); renderBadge();
+    },
+    votes: p => {
+      const row = p.new && p.new.event_id ? p.new : p.old, ev = me() && me().events.find(x => x.id === row.event_id); if (!ev) return;
+      if (p.eventType === 'DELETE') delete ev.votes[row.user_id]; else ev.votes[row.user_id] = row.movie_id;
+      renderPlan();
+    },
+    friends: () => reloadCloud()
+  });
+}
+let reloading = null, lastReload = 0;
+function reloadCloud() {
+  if (!CLOUD) return Promise.resolve();
+  if (reloading) return reloading;
+  reloading = (async () => {
+    const s = await CL.session(); if (!s) return;
+    await loadCloud(s.user); lastReload = Date.now();
+    renderPills(); renderFriends(); renderPlan(); renderProfile(); renderBadge();
+  })().catch(e => toast('Could not refresh: ' + e.message)).finally(() => { reloading = null; });
+  return reloading;
+}
+document.addEventListener('visibilitychange', () => { if (CLOUD && me() && document.visibilityState === 'visible' && Date.now() - lastReload > 30000) reloadCloud(); });
+let loadingFor = null;
+async function onCloudAuth(ev, s) {
+  const id = s && s.user && s.user.id;
+  if (!id) { if (ev === 'SIGNED_OUT' || ev === 'INITIAL_SESSION') { DB = { users: {}, session: null }; show('auth'); } return; }
+  if (DB.session === id || loadingFor === id) return;
+  loadingFor = id;
+  try { await loadCloud(s.user); lastReload = Date.now(); route(); }
+  catch (e) { show('auth'); $('#authErr').textContent = 'Could not load your account: ' + e.message + (/relation|does not exist|schema/i.test(e.message) ? ' (run the SQL setup in Supabase)' : ''); }
+  finally { loadingFor = null; }
+}
 
 /* ---------- onboarding: favourite genres ---------- */
 let obSel = new Set(), obEdit = false;
@@ -320,7 +417,7 @@ function showOnboard(edit) {
 }
 function obBtn() { const n = obSel.size, b = $('#obGo'); b.disabled = n < 3; b.textContent = n < 3 ? `Pick ${3 - n} more` : obEdit ? 'Save genres' : `Continue with ${n} genres`; }
 $('#obGo').onclick = () => {
-  const u = me(); u.genres = [...obSel]; save();
+  const u = me(); u.genres = [...obSel]; save(); bg(() => CL.updateProfile({ genres: u.genres }));
   route(); if (!obEdit) { gain(XP.onboard, 'onboard'); toast('Welcome bonus: +50 XP'); } else { go('profile'); toast('Genres updated'); }
 };
 
@@ -381,6 +478,7 @@ function like(id, dir, viaDeck) {
   const u = me(), m = M[id];
   if (!viaDeck) { u.likes = u.likes.filter(x => x !== id); u.skips = u.skips.filter(x => x !== id); queue = queue.filter(x => x !== id); }
   (dir > 0 ? u.likes : u.skips).push(id);
+  bg(() => CL.swipe(id, dir, today()));
   const before = todayCount(u); u.hist[today()] = before + 1; save();
   let xp = claimed('sw:' + id) ? 0 : XP.swipe, msg = '';
   if (dir > 0 && !fit(m).length && !claimed('ex:' + id)) { xp += XP.explore; u.xpKeys['ex:' + id] = 1; msg = `Explorer bonus: new genre ${m.g[0]}`; }
@@ -397,7 +495,7 @@ function record(id, dir) {
 }
 function undo() {
   const h = undoStack.pop(); if (!h) return; const u = me(), arr = h.dir > 0 ? u.likes : u.skips;
-  arr.splice(arr.lastIndexOf(h.id), 1); u.hist[today()] = Math.max(0, todayCount(u) - 1); save();
+  arr.splice(arr.lastIndexOf(h.id), 1); bg(() => CL.unswipe(h.id)); u.hist[today()] = Math.max(0, todayCount(u) - 1); save();
   queue.unshift(h.id); renderDeck(); rotSign = 1; cx = h.dir * deck.clientWidth * 1.3; cy = -20; paint();
   animateTo(0, 0, 0, 0, .85, .45); renderFriends(); renderProfile();
 }
@@ -425,6 +523,7 @@ $('#bSend').onclick = () => topCard() && sendSheet(topCard().dataset.id);
 
 /* first-run hint: if the user hasn't touched the deck within 3 s, nudge the card both ways once */
 let hintT = 0, hinting = false, hintRun = 0;
+function setHintDone(v) { const u = me(); if (!u) return; u.hintDone = v; save(); bg(() => CL.updateProfile({ hint_done: v })); }
 const wait = ms => new Promise(r => setTimeout(r, ms));
 function maybeHint() {
   const u = me(); clearTimeout(hintT);
@@ -433,13 +532,13 @@ function maybeHint() {
 }
 function stopHint() {
   clearTimeout(hintT); const u = me();
-  if (u && !u.hintDone) { u.hintDone = true; save(); }
+  if (u && !u.hintDone) setHintDone(true);
   if (!hinting) return; hinting = false; hintRun++;
   $('#hint').classList.remove('on'); $('#hand').style.transform = '';
 }
 async function playHint() {
   const u = me(); if (!u || u.hintDone || drag || busy || sheetOpen || cur !== 'discover' || !topCard() || !$('#s-main').classList.contains('on')) return;
-  u.hintDone = true; save(); hinting = true; const run = ++hintRun, W = deck.clientWidth;
+  setHintDone(true); hinting = true; const run = ++hintRun, W = deck.clientWidth;
   $('#hint').classList.add('on');
   if (RM.matches) { await wait(3200); if (run === hintRun) stopHint(); return; }
   for (let loop = 0; loop < 2 && run === hintRun; loop++) {
@@ -552,21 +651,32 @@ function renderFriends() {
   <button class="together" id="wtBtn"><span class="orb">${ic('group-plus')}</span><span class="grow"><span class="tt">Watch together</span><span class="s">Pick friends, add titles and get 5 picks for your group</span></span>${ic('chevron')}</button>
   <div class="searchbox">${ic('search')}<input class="field" id="fq" placeholder="Find friends by name or ID" autocomplete="off" value="${esc(fq)}"></div>
   <div class="results" id="fres"></div>
-  <div class="myid">Your ID <code>${esc(u.id)}</code><button id="cpId">${ic('copy')}Copy</button></div>
+  <div class="myid">Your ID <code>${esc(u.handle || u.id)}</code><button id="cpId">${ic('copy')}Copy</button></div>
   <div id="fin"></div>
   <div id="flist"></div>`;
   $('#wtBtn').onclick = () => openTogether();
-  $('#cpId').onclick = () => copy(u.id);
+  $('#cpId').onclick = () => copy(u.handle || u.id);
   $('#fq').addEventListener('input', e => { fq = e.target.value; renderResults(); });
   if (focused) { const f = $('#fq'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
   renderResults(); renderInbox(); renderFriendList(); renderBadge();
 }
+let fqT = 0;
 function renderResults() {
   const u = me(), q = norm(fq.trim()), box = $('#fres'); if (!box) return;
+  clearTimeout(fqT);
   if (!q) { box.innerHTML = ''; return; }
-  const res = Object.values(DB.users).filter(x => x.id !== u.id && (norm(x.name).includes(q) || norm(x.id).includes(q))).slice(0, 6);
-  box.innerHTML = `<div class="group">${res.map(x => `<div class="row">${av(x)}<div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(x.id)}</div></div>${u.friends.includes(x.id) ? '<span class="small">Friend</span>' : `<button class="btn sm" data-add="${esc(x.id)}">${ic('plus')}Add</button>`}</div>`).join('') || `<div class="row muted">No one found for “${esc(fq)}”. Try Nina or CM-6612.</div>`}</div>`;
-  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => addFriend(b.dataset.add));
+  if (CLOUD) {
+    box.innerHTML = '<div class="group"><div class="row muted">Searching…</div></div>';
+    fqT = setTimeout(() => CL.search(fq).then(res => { if (norm(fq.trim()) === q) paintResults(res); })
+      .catch(e => { box.innerHTML = `<div class="group"><div class="row muted">${esc(e.message)}</div></div>`; }), 300);
+    return;
+  }
+  paintResults(Object.values(DB.users).filter(x => x.id !== u.id && (norm(x.name).includes(q) || norm(x.id).includes(q))).slice(0, 6));
+}
+function paintResults(res) {
+  const u = me(), box = $('#fres'); if (!box || !u) return;
+  box.innerHTML = `<div class="group">${res.map(x => `<div class="row">${av(x)}<div class="grow"><div class="t">${esc(x.name)}</div><div class="s">${esc(x.handle || x.id)}</div></div>${u.friends.includes(x.id) ? '<span class="small">Friend</span>' : `<button class="btn sm" data-add="${esc(x.handle || x.id)}">${ic('plus')}Add</button>`}</div>`).join('') || `<div class="row muted">No one found for “${esc(fq)}”. ${CLOUD ? 'Ask your friend for their ID (CM-1234).' : 'Try Nina or CM-6612.'}</div>`}</div>`;
+  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { b.disabled = true; addFriend(b.dataset.add); });
 }
 function renderInbox() {
   const u = me(), items = inbox(u), box = $('#fin'); if (!box) return;
@@ -578,7 +688,7 @@ function renderInbox() {
   box.querySelectorAll('[data-ib]').forEach(b => b.onclick = e => {
     e.stopPropagation(); const { ib, f, k, id } = b.dataset;
     if (ib === 'reply') return pickFilmSheet(f);
-    u.inboxDone[f + ':' + k + ':' + id] = 1;
+    u.inboxDone[f + ':' + k + ':' + id] = 1; bg(() => CL.handled(f, id, k));
     const msg = like(id, ib === 'yes' ? 1 : -1, false); save();
     toast(ib === 'yes' ? msg || `${M[id].t} added to your list` : 'Skipped');
     renderInbox(); renderBadge(); renderDeck(); renderProfile();
@@ -588,36 +698,41 @@ function renderFriendList() {
   const u = me(), fr = u.friends.map(U).filter(Boolean).map(f => ({ f, st: fstate(u, f.id), m: matches(u, f).length })).sort((a, b) => (b.st.risk - a.st.risk) || b.st.s - a.st.s || b.m - a.m);
   $('#flist').innerHTML = `<h2>Your friends · ${fr.length}<span class="small" style="font-weight:500">Streak</span></h2>
   <div class="group">${fr.map(({ f, st, m }) => `<div class="row" data-f="${esc(f.id)}" role="button" tabindex="0">${av(f)}<div class="grow"><div class="t">${esc(f.name)}</div><div class="status ${st.cls}">${esc(st.label)}</div></div>${fsPill(st)}<button class="add ${st.mine ? '' : 'on'}" data-send="${esc(f.id)}" aria-label="Send a film to ${esc(first(f))}">${ic('send')}</button></div>`).join('') || '<div class="row muted">No friends yet. Search above to add someone.</div>'}</div>
-  <p class="small" style="margin:10px 4px">Send each other at least one film every day and the flame grows. The hourglass means the streak ends at midnight unless you both send. Friends here are demo accounts and reply after a few seconds.</p>`;
+  <p class="small" style="margin:10px 4px">Send each other at least one film every day and the flame grows. The hourglass means the streak ends at midnight unless you both send. ${CLOUD ? '' : 'Friends here are demo accounts and reply after a few seconds.'}</p>`;
   $$('#flist [data-f]').forEach(b => b.onclick = () => friendSheet(b.dataset.f));
   $$('#flist [data-send]').forEach(b => b.onclick = e => { e.stopPropagation(); pickFilmSheet(b.dataset.send); });
 }
-function addFriend(id) {
-  const u = me(); if (u.friends.includes(id) || id === u.id || !U(id)) return;
+async function addFriend(handle) {
+  if (CLOUD) {
+    try { const f = await CL.addFriend(handle); await reloadCloud(); gain(XP.friend, 'fr:' + f.id); toast(`${f.name} added. Send a film to start a streak`); renderResults(); }
+    catch (e) { toast(e.message); renderResults(); }
+    return;
+  }
+  const id = handle, u = me(); if (u.friends.includes(id) || id === u.id || !U(id)) return;
   u.friends.push(id); save(); gain(XP.friend, 'fr:' + id); toast(`${U(id).name} added. Send a film to start a streak`);
   renderResults(); renderFriendList();
 }
 function friendSheet(fid) {
-  const u = me(), f = U(fid); u.watched = u.watched || {};
+  const u = me(), f = U(fid); u.seen = u.seen || {};
   const draw = () => {
     const ms = matches(u, f), st = fstate(u, fid);
     const week = [...Array(7)].map((_, i) => { const d = addDays(new Date(), i - 6), ok = both(u, fid, 6 - i), e = exDay(u, fid, dkey(d)), half = !ok && (e.me.length || e.them.length);
       return `<div class="day">${d.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 2)}<span class="dot ${ok ? 'full' : ''} ${i === 6 ? 'today' : ''}" style="${half ? 'background:var(--accent-soft)' : ''}">${ok ? ic('flame') : half ? ic('send', 'muted') : ''}</span></div>`; }).join('');
-    $('#sheetBody').innerHTML = `<div style="display:flex;align-items:center;gap:14px">${av(f, 'lg')}<div class="grow"><div class="pn" style="font-size:34px">${esc(f.name)}</div><div class="small">${esc(f.id)} · ${pl(ms.length, 'shared title', 'shared titles')}</div></div></div>
+    $('#sheetBody').innerHTML = `<div style="display:flex;align-items:center;gap:14px">${av(f, 'lg')}<div class="grow"><div class="pn" style="font-size:34px">${esc(f.name)}</div><div class="small">${esc(f.handle || f.id)} · ${pl(ms.length, 'shared title', 'shared titles')}</div></div></div>
     <div class="group" style="margin-top:16px"><div class="ringbox" style="grid-template-columns:1fr auto;padding-bottom:12px"><div><div class="big">${pl(st.s, 'day', 'days')}</div><div class="status ${st.cls}" style="margin-top:4px">${esc(st.label)}</div></div>${fsPill(st)}</div><div class="week">${week}</div></div>
     <button class="btn wide" id="sendF" style="margin-top:12px">${ic('send')}Send ${esc(first(f))} a film</button>
     <div class="chips" style="margin-top:14px">${(f.genres || []).map(g => `<span class="chip" style="min-height:30px">${esc(g)}</span>`).join('')}</div>
     <h2>You both want to see</h2>
     <p class="small" style="margin:-4px 4px 10px">Tick when you've watched it. Ticked by both = watched together.</p>
-    <div class="group">${ms.map(id => { const k = fid + ':' + id, w = u.watched[k] || (u.watched[k] = { me: false, them: hash(k) % 3 === 0 }), m = M[id];
+    <div class="group">${ms.map(id => { const k = fid + ':' + id, w = { me: !!u.seen[id], them: f.mock ? hash(k) % 3 === 0 : !!(f.seen || {})[id] }, m = M[id];
       return `<div class="row"><span class="mini">${poster(m)}</span><div class="grow"><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.g[0])}</div>${w.me && w.them ? `<div class="okb">Watched together</div>` : ''}</div>
       <button class="chk ${w.me ? 'on' : ''}" data-w="${id}"><span>${ic('check')}</span>You</button><div class="chk ${w.them ? 'on' : ''}"><span>${ic('check')}</span>${esc(first(f))}</div></div>`; }).join('') || '<div class="row muted">No matches yet. Keep swiping.</div>'}</div>
     <button class="btn alt wide" id="planWith" style="margin-top:16px">${ic('group-plus')}Watch together with ${esc(first(f))}</button>
     <button class="btn alt wide" id="rmF" style="margin-top:10px">Remove friend</button>`;
-    $$('[data-w]').forEach(b => b.onclick = () => { const w = u.watched[fid + ':' + b.dataset.w]; w.me = !w.me; u.seen[b.dataset.w] = u.seen[b.dataset.w] || w.me; save(); if (w.me) gain(XP.watch, 'seen:' + b.dataset.w); draw(); renderProfile(); });
+    $$('[data-w]').forEach(b => b.onclick = () => { setSeen(b.dataset.w, !u.seen[b.dataset.w]); draw(); renderProfile(); });
     $('#sendF').onclick = () => pickFilmSheet(fid);
     $('#planWith').onclick = () => openTogether([fid]);
-    $('#rmF').onclick = () => { u.friends = u.friends.filter(x => x !== fid); save(); closeSheet(); renderFriends(); };
+    $('#rmF').onclick = () => { u.friends = u.friends.filter(x => x !== fid); save(); bg(() => CL.removeFriend(fid)); closeSheet(); renderFriends(); };
   };
   openSheet('', draw);
 }
@@ -721,9 +836,16 @@ function drawWT() {
     calendar($('#wtCal'), wt.date, k => wt.date = k);
     $('#wtGo').onclick = () => {
       const cands = [...wt.titles], guests = [...wt.friends], votes = {};
+      if (CLOUD) {
+        const btn = $('#wtGo'); btn.disabled = true;
+        CL.createEvent(wt.title.trim() || 'Movie night', wt.date || nextSat(), cands, guests)
+          .then(async id => { await reloadCloud(); closeSheet(); go('plan'); gain(XP.plan, 'plan:' + id); toast('Movie night created. Friends can vote now'); })
+          .catch(e => { btn.disabled = false; toast(e.message); });
+        return;
+      }
       guests.forEach(g => { const p = U(g); votes[g] = cands.map(id => ({ id, s: (p.likes.includes(id) ? 3 : 0) + M[id].g.filter(x => (p.genres || []).includes(x)).length + (hash(g + id) % 10) / 10 })).sort((a, b) => b.s - a.s)[0].id; });
       u.events.push({ id: 'e' + Date.now(), title: wt.title.trim() || 'Movie night', date: wt.date || nextSat(), host: u.id, guests, cands, votes, winner: null });
-      save(); closeSheet(); renderPlan(); go('plan'); gain(XP.plan); toast('Movie night created, friends are voting');
+      save(); closeSheet(); renderPlan(); go('plan'); gain(XP.plan, 'plan:' + u.events[u.events.length - 1].id); toast('Movie night created, friends are voting');
     };
   }
   const bk = $('#wtBack'); if (bk) bk.onclick = () => { wt.step--; drawWT(); };
@@ -746,20 +868,20 @@ function renderPlan() {
     ${ev.cands.filter(id => M[id]).map(id => { const m = M[id], n = c[id], voters = Object.entries(ev.votes).filter(([, v]) => v === id).map(([k]) => U(k)).filter(Boolean);
       return `<button class="cand ${ev.votes[u.id] === id ? 'mine' : ''}" data-vote="${id}"><span class="mini">${poster(m)}</span><div><div style="font-weight:600">${esc(m.t)}</div><div class="avs" style="margin-top:4px;min-height:26px">${voters.map(p => av(p, 'sm')).join('')}</div><div class="bar"><i style="width:${n / total * 100}%"></i></div></div><span class="votes">${n}</span></button>`; }).join('')}
     ${ev.winner && M[ev.winner] ? `<div class="winner">${ic('trophy')}You're watching ${esc(M[ev.winner].t)}</div>` : ''}
-    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn wide" data-decide="${ev.id}">${ic('coin')}${ev.winner ? 'Decide again' : 'Decide'}</button><button class="btn alt" data-del="${ev.id}">Delete</button></div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn wide" data-decide="${ev.id}">${ic('coin')}${ev.winner ? 'Decide again' : 'Decide'}</button>${ev.host === u.id ? `<button class="btn alt" data-del="${ev.id}">Delete</button>` : ''}</div>
     <p class="small" style="margin:8px 2px 0">${ev.votes[u.id] ? 'Tap another title to change your vote.' : 'Tap a title to vote.'} A tie is settled by a coin flip.</p></article>`;
   }).join('') || '<div class="group"><div class="row muted">No plans yet. Tap a day above or New.</div></div>'}
-  <p class="small" style="margin:10px 4px">Friends' votes are simulated.</p>`;
+  ${CLOUD ? '' : `<p class="small" style="margin:10px 4px">Friends' votes are simulated in demo mode.</p>`}`;
   $('#newEv').onclick = () => openTogether();
   $$('#strip [data-day]').forEach(b => b.onclick = () => { const k = b.dataset.day; if (byDate[k]) $('#ev-' + byDate[k][0].id).scrollIntoView({ behavior: RM.matches ? 'auto' : 'smooth', block: 'start' }); else openTogether([], k); });
-  $$('[data-vote]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.closest('.ev').dataset.ev); ev.votes[u.id] = b.dataset.vote; ev.winner = null; save(); renderPlan(); gain(XP.vote, 'vote:' + ev.id); });
+  $$('[data-vote]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.closest('.ev').dataset.ev); ev.votes[u.id] = b.dataset.vote; ev.winner = null; save(); bg(() => CL.vote(ev.id, b.dataset.vote)); renderPlan(); gain(XP.vote, 'vote:' + ev.id); });
   $$('[data-decide]').forEach(b => b.onclick = () => decide(u.events.find(e => e.id === b.dataset.decide)));
-  $$('[data-del]').forEach(b => b.onclick = () => { u.events = u.events.filter(e => e.id !== b.dataset.del); save(); renderPlan(); toast('Plan deleted'); });
+  $$('[data-del]').forEach(b => b.onclick = () => { const did = b.dataset.del; u.events = u.events.filter(e => e.id !== did); save(); bg(() => CL.deleteEvent(did)); renderPlan(); toast('Plan deleted'); });
 }
 async function decide(ev) {
   const c = tally(ev), max = Math.max(...Object.values(c)); let tied = ev.cands.filter(id => c[id] === max && M[id]);
   while (tied.length > 1) { const w = await flip(tied[0], tied[1]); tied = [w, ...tied.slice(2)]; }
-  ev.winner = tied[0]; save(); renderPlan(); toast(`Winner: ${M[ev.winner].t}`);
+  ev.winner = tied[0]; save(); bg(() => CL.setWinner(ev.id, ev.winner)); renderPlan(); toast(`Winner: ${M[ev.winner].t}`);
 }
 function flip(a, b) {
   return new Promise(res => {
@@ -808,30 +930,36 @@ function renderProfile() {
   <button class="row" id="hintR">${ic('hand', 'muted')}<span class="grow">Show the swipe tip again</span></button></div>
   <h2>Account</h2>
   <div class="group">
-   <button class="row" id="pId">${ic('copy', 'muted')}<span class="grow">Your ID</span><code style="font-weight:600">${esc(u.id)}</code></button>
+   <button class="row" id="pId">${ic('copy', 'muted')}<span class="grow">Your ID</span><code style="font-weight:600">${esc(u.handle || u.id)}</code></button>
    <div class="row">${ic(u.provider === 'google' ? 'google' : 'mail', 'muted')}<span class="grow">Sign-in method</span><span class="muted">${u.provider === 'google' ? 'Google' : 'Email'}</span></div>
-   <div class="row">${ic('key', 'muted')}<span class="grow">TMDB</span><span class="muted">${TMDB.enabled ? 'Connected' : 'Demo catalog'}</span></div>
+   <div class="row">${ic('key', 'muted')}<span class="grow">Your data</span><span class="muted">${CLOUD ? 'Synced to the cloud' : 'This device only (demo)'}</span></div>
+   <div class="row">${ic('film', 'muted')}<span class="grow">Catalog</span><span class="muted">${TMDB_LIVE ? 'TMDB live' : 'Demo catalog'}</span></div>
    <div class="row">${ic('tv', 'muted')}<span class="grow">Running as</span><span class="muted">${N.native ? 'Android app' : 'Web app'}</span></div>
    <button class="row" id="pOut">${ic('logout')}<span class="grow">Sign out</span></button>
   </div>
   <details style="margin-top:14px"><summary class="small" style="cursor:pointer;min-height:32px">Developer setup</summary>
-   <p class="small">Add keys in <code>config.js</code> and set <code>DEMO_MODE: false</code>. Replace any icon in <code>icons/</code>. Build the APK with the steps in README.md.</p>
-   <div class="cfg">TMDB_READ_TOKEN: '${CFG.TMDB_READ_TOKEN ? '••••' : ''}'\nTMDB_API_KEY:    '${CFG.TMDB_API_KEY ? '••••' : ''}'\nGOOGLE_CLIENT_ID: '${CFG.GOOGLE_CLIENT_ID ? '••••' : ''}'\nDEMO_MODE:        ${!!CFG.DEMO_MODE}</div>
+   <p class="small">Setup steps are in SETUP.md in the GitHub repo. Replace any icon in <code>icons/</code>.</p>
+   <div class="cfg">SUPABASE_URL:         ${CFG.SUPABASE_URL ? 'set' : '–'}\nServer reachable:     ${CLOUD ? 'yes' : 'no'}\nTMDB catalog:         ${TMDB_LIVE ? 'live' : 'demo'}\nGOOGLE_WEB_CLIENT_ID: ${CFG.GOOGLE_WEB_CLIENT_ID ? 'set' : '–'}\nDEMO_MODE:            ${!!CFG.DEMO_MODE}</div>
   </details>`;
   $('#pLvl').onclick = progressSheet; $('#edG').onclick = () => showOnboard(true);
   $$('[data-th]').forEach(b => b.onclick = () => { prefs.theme = b.dataset.th; applyPrefs(); renderProfile(); });
   $('#crtT').onclick = () => { prefs.crt = !prefs.crt; applyPrefs(); renderProfile(); };
-  $('#hintR').onclick = () => { u.hintDone = false; save(); go('discover'); toast('Tip shows if you wait 3 seconds'); };
-  $('#pId').onclick = () => copy(u.id); $('#pOut').onclick = logout;
+  $('#hintR').onclick = () => { setHintDone(false); go('discover'); toast('Tip shows if you wait 3 seconds'); };
+  $('#pId').onclick = () => copy(u.handle || u.id); $('#pOut').onclick = logout;
   $$('[data-lf]').forEach(b => b.onclick = () => { libF = b.dataset.lf; renderProfile(); });
   $$('[data-sendm]').forEach(b => b.onclick = () => sendSheet(b.dataset.sendm));
-  $$('[data-s]').forEach(b => b.onclick = () => { const id = b.dataset.s; u.seen[id] = !u.seen[id]; if (!u.seen[id]) delete u.ratings[id]; save(); if (u.seen[id]) gain(XP.watch, 'seen:' + id); renderProfile(); });
+  $$('[data-s]').forEach(b => b.onclick = () => { setSeen(b.dataset.s, !u.seen[b.dataset.s]); renderProfile(); });
   $$('[data-r]').forEach(b => b.onclick = () => {
     const id = b.dataset.r, n = +b.dataset.n; if (!u.seen[id]) return toast('Mark it as watched first, then rate it');
-    u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); if (u.ratings[id]) gain(XP.rate, 'rate:' + id); renderProfile();
+    u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id])); if (u.ratings[id]) gain(XP.rate, 'rate:' + id); renderProfile();
   });
 }
 
+function setSeen(id, v) {
+  const u = me(); u.seen = u.seen || {}; u.ratings = u.ratings || {};
+  if (v) u.seen[id] = true; else { delete u.seen[id]; delete u.ratings[id]; }
+  save(); bg(() => CL.setWatched(id, v, u.ratings[id])); if (v) gain(XP.watch, 'seen:' + id);
+}
 function renderAll() { renderDeck(); renderFriends(); renderPlan(); renderProfile(); renderBadge(); }
 
 /* ---------- native (Capacitor) integration ---------- */
@@ -846,13 +974,23 @@ N.onBack(() => {
 });
 N.statusBar();
 
-/* ---------- boot: splash while icons + catalog load ---------- */
+/* ---------- boot: splash while icons, catalog and server check load ---------- */
 const t0 = performance.now();
 let splashGone = false;
 function hideSplash() { if (splashGone) return; splashGone = true; const s = $('#splash'); s.classList.add('out'); setTimeout(() => s.remove(), 500); }
 $('#splash').addEventListener('click', hideSplash);
-Promise.all([loadIcons(), loadCatalog()]).then(() => {
-  route(); N.hideSplash();
+(async () => {
+  const [, , up] = await Promise.all([loadIcons(), loadCatalog(), CL.configured ? CL.reachable() : Promise.resolve(false)]);
+  CLOUD = !!up;
+  $('#demoBtn').hidden = CLOUD;
+  $('#authNote').textContent = CLOUD ? 'Your account syncs across all your devices.' : 'Offline demo: accounts are stored only on this device.';
+  $('#fPass').minLength = CLOUD ? 6 : 4;
+  if (CL.configured && !CLOUD) setTimeout(() => toast('Server unreachable · running the offline demo'), 2600);
+  if (CLOUD) {
+    DB = { users: {}, session: null };
+    await new Promise(res => { let first = true; CL.onAuth((ev, s) => { const p = onCloudAuth(ev, s); if (first) { first = false; p.then(res, res); } }); });
+  } else route();
+  N.hideSplash();
   setTimeout(hideSplash, Math.max(0, (RM.matches ? 300 : 2300) - (performance.now() - t0)));
-});
+})();
 }

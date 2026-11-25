@@ -1,0 +1,3 @@
+# Used only if you deploy with the Supabase CLI (`supabase functions deploy tmdb`).
+[functions.tmdb]
+verify_jwt = false

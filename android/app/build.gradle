@@ -7,8 +7,9 @@ android {
         applicationId "sk.cinematch.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // CI sets these from the run number so every APK installs over the previous one
+        versionCode (System.getenv("CM_VERSION_CODE") ?: "1").toInteger()
+        versionName "1.0." + (System.getenv("CM_VERSION_CODE") ?: "0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,8 +17,26 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Stable signing key (GitHub secret ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD).
+    // The same key on every build keeps Google sign-in working and lets new APKs update the installed app.
+    def cmKeystore = System.getenv("CM_KEYSTORE_FILE")
+    signingConfigs {
+        cinematch {
+            if (cmKeystore) {
+                storeFile file(cmKeystore)
+                storeType "pkcs12"
+                storePassword System.getenv("CM_KEYSTORE_PASSWORD")
+                keyAlias "cinematch"
+                keyPassword System.getenv("CM_KEYSTORE_PASSWORD")
+            }
+        }
+    }
     buildTypes {
+        debug {
+            if (cmKeystore) signingConfig signingConfigs.cinematch
+        }
         release {
+            if (cmKeystore) signingConfig signingConfigs.cinematch
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
