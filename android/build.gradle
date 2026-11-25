@@ -22,6 +22,10 @@ allprojects {
         google()
         mavenCentral()
     }
+    // The Google sign-in plugin pulls two androidx.browser versions; pin one that works with compileSdk 35
+    configurations.all {
+        resolutionStrategy { force 'androidx.browser:browser:1.8.0' }
+    }
 }
 
 task clean(type: Delete) {
