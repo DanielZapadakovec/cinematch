@@ -9,7 +9,8 @@ Do these steps once, in this order.
    It should finish with “Success. No rows returned”.
 
 If you see `relation "profiles" already exists`, the script had already run. Then run only
-[`supabase/migrations/0002_grants.sql`](supabase/migrations/0002_grants.sql) (safe to repeat).
+[`0002_grants.sql`](supabase/migrations/0002_grants.sql) and [`0003_avatars.sql`](supabase/migrations/0003_avatars.sql)
+(both safe to repeat). 0003 adds profile pictures (Google photo or your own).
 
 ## 2. Web version + sign-in links (2 min)
 1. GitHub → repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
@@ -53,7 +54,7 @@ In [Google Cloud Console](https://console.cloud.google.com/):
    * Package name: `sk.cinematch.app`
    * SHA-1: `4E:67:89:E2:C3:5D:D1:2A:FE:C8:9E:74:CC:2E:36:68:9D:D8:11:21`
 5. Supabase → **Authentication → Sign In / Providers → Google**: enable, paste the **Web** Client ID and Client secret → Save.
-6. Put the **Web** Client ID into `web/config.js` → `GOOGLE_WEB_CLIENT_ID` (it is public), push, and the next APK has Google sign-in.
+6. The Web Client ID is already in `web/config.js` (`GOOGLE_WEB_CLIENT_ID`).
 
 ## How the app behaves
 * Server reachable → real accounts, friends by ID (CM-1234), films sent between friends, live updates.

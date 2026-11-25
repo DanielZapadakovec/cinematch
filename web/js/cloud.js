@@ -52,7 +52,7 @@ window.Cloud = (() => {
     const ids = new Set(friends);
     events.forEach(e => { ids.add(e.host_id); e.event_guests.forEach(g => ids.add(g.user_id)); });
     ids.delete(uid);
-    const profiles = ids.size ? ok(await db.from('profiles').select('id,handle,name,color,genres').in('id', [...ids])) : [];
+    const profiles = ids.size ? ok(await db.from('profiles').select('*').in('id', [...ids])) : [];
     return { me, friends, profiles, swipes, watched, sends, events, xpKeys: xp.map(r => r.key) };
   }
 
@@ -60,7 +60,7 @@ window.Cloud = (() => {
   const clean = q => String(q).replace(/[^\p{L}\p{N}\s-]/gu, '').trim().slice(0, 40);
   async function search(q) {
     const s = clean(q); if (!s) return [];
-    return ok(await client().from('profiles').select('id,handle,name,color,genres').or(`name.ilike.%${s}%,handle.ilike.%${s}%`).neq('id', uid).limit(8));
+    return ok(await client().from('profiles').select('*').or(`name.ilike.%${s}%,handle.ilike.%${s}%`).neq('id', uid).limit(8));
   }
   const addFriend = async handle => ok(await client().rpc('add_friend', { friend_handle: handle }));
   const removeFriend = async id => ok(await client().rpc('remove_friend', { friend: id }));
@@ -77,6 +77,7 @@ window.Cloud = (() => {
   const createEvent = async (title, date, cands, guests) => ok(await client().rpc('create_event', { p_title: title, p_date: date, p_cands: cands, p_guests: guests }));
   const vote = async (event_id, movie_id) => ok(await client().from('votes').upsert({ event_id, user_id: uid, movie_id, updated_at: new Date().toISOString() }));
   const setWinner = async (id, winner) => ok(await client().from('events').update({ winner }).eq('id', id));
+  const updateEvent = async (id, patch) => ok(await client().from('events').update(patch).eq('id', id));
   const deleteEvent = async id => ok(await client().from('events').delete().eq('id', id));
 
   /* ---------- realtime ---------- */
@@ -93,6 +94,6 @@ window.Cloud = (() => {
   return {
     configured, reachable, session, onAuth, signUp, signIn, googleWeb, googleIdToken, resetPassword, signOut,
     load, search, addFriend, removeFriend, updateProfile, swipe, unswipe, gainXp, send, handled, setWatched,
-    createEvent, vote, setWinner, deleteEvent, subscribe, unsubscribe, get uid() { return uid; }
+    createEvent, vote, setWinner, updateEvent, deleteEvent, subscribe, unsubscribe, get uid() { return uid; }
   };
 })();

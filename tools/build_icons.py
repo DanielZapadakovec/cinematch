@@ -147,7 +147,7 @@ PHOSPHOR = {
     'key': 'key', 'copy': 'copy', 'eye': 'eye', 'group-plus': 'film-slate', 'edit': 'pencil-simple', 'trophy': 'trophy',
     'shield': 'shield', 'send': 'paper-plane-tilt', 'hourglass': 'hourglass-medium', 'inbox': 'tray',
     'reply': 'arrow-bend-up-left', 'hand': 'hand-swipe-right', 'sun': 'sun', 'moon': 'moon', 'monitor': 'monitor',
-    'crt': 'television',
+    'crt': 'television', 'gear': 'gear-six', 'camera': 'camera', 'user': 'user', 'sound': 'speaker-high',
 }
 
 

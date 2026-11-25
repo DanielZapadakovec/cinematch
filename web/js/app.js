@@ -25,7 +25,7 @@ const XP_RULES = [['Send a film to a friend', XP.send], ['Keep a friend streak f
 
 /* ---------- device preferences: theme + CRT effect ---------- */
 const PKEY = 'cinematch-prefs';
-let prefs = { theme: 'system', crt: true };
+let prefs = { theme: 'system', crt: true, sound: true };
 try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem(PKEY) || '{}') }; } catch (e) {}
 function applyPrefs() {
   const r = document.documentElement;
@@ -34,6 +34,24 @@ function applyPrefs() {
   try { localStorage.setItem(PKEY, JSON.stringify(prefs)); } catch (e) {}
 }
 applyPrefs();
+
+/* ---------- sound effects: tiny chiptune synth, no audio files ---------- */
+const SFX = (() => {
+  let ctx = null;
+  const ready = () => prefs.sound !== false && ctx && ctx.state === 'running';
+  function tone(f, t, d, type = 'square', vol = .05) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+    o.connect(g).connect(ctx.destination); o.start(t); o.stop(t + d + .03);
+  }
+  return {
+    unlock() { try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state === 'suspended') ctx.resume(); } catch (e) {} },
+    xp() { if (!ready()) return; const t = ctx.currentTime; [988, 1319, 1976].forEach((f, i) => tone(f, t + i * .055, .14, 'square', .045)); tone(1976, t + .17, .25, 'triangle', .05); },
+    level() { if (!ready()) return; const t = ctx.currentTime; [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => tone(f, t + i * .09, .18, 'square', .05)); [523, 659, 784].forEach(f => tone(f * 2, t + .66, .6, 'triangle', .04)); }
+  };
+})();
+document.addEventListener('pointerdown', () => SFX.unlock(), { capture: true });
 
 /* ---------- catalog ---------- */
 let CATALOG = [], M = {};
@@ -79,7 +97,7 @@ const me = () => DB.users[DB.session];
 const U = id => DB.users[id];
 const first = u => u === me() ? 'you' : u.name.split(' ')[0];
 const initials = n => n.replace(/[^\p{L}\s]/gu, '').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
-const av = (u, cls = '') => `<span class="av ${cls}" style="background:${esc(u.color)}">${esc(initials(u.name))}</span>`;
+const av = (u, cls = '') => `<span class="av ${cls}" style="background:${esc(u.color)}"><span>${esc(initials(u.name))}</span>${u.avatar ? `<img src="${esc(u.avatar)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}</span>`;
 const names = list => { const n = list.map(first); return n.length <= 2 ? n.join(' & ') : n.slice(0, -1).join(', ') + ' & ' + n[n.length - 1]; };
 
 function seedExchange(u, fid) {
@@ -113,7 +131,7 @@ function gain(n, key) {
   if (key) { if (u.xpKeys[key]) return 0; u.xpKeys[key] = 1; }
   if (!n) return 0;
   if (CLOUD && key) bg(() => CL.gainXp(key, n).then(t => { if (typeof t === 'number' && me()) { me().xp = t; renderPills(); } }));
-  const before = lvl(u.xp).l; u.xp = (u.xp || 0) + n; save(); floatXP(n); renderPills();
+  const before = lvl(u.xp).l; u.xp = (u.xp || 0) + n; save(); floatXP(n); SFX.xp(); renderPills();
   const after = lvl(u.xp); if (after.l > before) setTimeout(() => levelUp(after), 450);
   return n;
 }
@@ -126,7 +144,7 @@ function floatXP(n) {
 let lvT;
 function levelUp(L) {
   $('#lvNum').textContent = L.l; $('#lvTitle').textContent = `Level ${L.l}`; $('#lvSub').textContent = `You're now a ${L.title}`;
-  $('#lvup').classList.add('on'); N.haptic('HEAVY'); const m = $('#medal');
+  $('#lvup').classList.add('on'); N.haptic('HEAVY'); SFX.level(); const m = $('#medal');
   clearTimeout(lvT); lvT = setTimeout(() => $('#lvup').classList.remove('on'), 2600);
   spring({ from: .3, to: 1, velocity: 0, damping: .6, response: .5, eps: .002, onUpdate: v => { m.style.transform = `scale(${v})`; } });
 }
@@ -215,7 +233,7 @@ function tracker() {
   };
 }
 document.addEventListener('pointerdown', e => {
-  const el = e.target.closest('.btn,.chip,.cb,.tab,.pill,.cand,.gtile,.together,.add,.seen,.row[data-f],.cal .d,.strip button,.rec[data-pick]');
+  const el = e.target.closest('.btn,.chip,.cb,.tab,.pill,.iconbtn,.swatch,.cand,.gtile,.together,.add,.seen,.row[data-f],.cal .d,.strip button,.rec[data-pick]');
   if (!el || el.disabled) return; el.classList.add('press');
   const off = () => { el.classList.remove('press'); removeEventListener('pointerup', off); removeEventListener('pointercancel', off); };
   addEventListener('pointerup', off); addEventListener('pointercancel', off);
@@ -339,18 +357,21 @@ $('#gBtn').onclick = async () => {
 /* ---------- cloud session: load from Supabase into the same in-memory model ---------- */
 function hydrate(b, user) {
   const uid = b.me.id, users = {};
-  const mk = p => ({ id: p.id, handle: p.handle, name: p.name, color: p.color, genres: p.genres || [], likes: [], skips: [], hist: {}, seen: {}, ratings: {}, friends: [] });
+  const mk = p => ({ id: p.id, handle: p.handle, name: p.name, color: p.color, avatar: p.avatar_url || '', genres: p.genres || [], likes: [], skips: [], hist: {}, seen: {}, ratings: {}, friends: [] });
   b.profiles.forEach(p => { users[p.id] = mk(p); });
-  const prov = user && user.app_metadata && user.app_metadata.provider;
+  const prov = user && user.app_metadata && user.app_metadata.provider, meta = (user && user.user_metadata) || {};
+  const googlePic = meta.avatar_url || meta.picture || '';
   const u = users[uid] = Object.assign(mk(b.me), {
     email: (user && user.email) || '', provider: prov === 'google' ? 'google' : 'email', xp: b.me.xp, hintDone: b.me.hint_done,
-    friends: b.friends.slice(), xpKeys: Object.fromEntries(b.xpKeys.map(k => [k, 1])), ex: {}, inboxDone: {}, events: []
+    googlePic, friends: b.friends.slice(), xpKeys: Object.fromEntries(b.xpKeys.map(k => [k, 1])), ex: {}, inboxDone: {}, events: []
   });
   b.swipes.forEach(x => { const o = users[x.user_id]; if (!o) return; (x.dir > 0 ? o.likes : o.skips).push(x.movie_id); o.hist[x.day] = (o.hist[x.day] || 0) + 1; });
   b.watched.forEach(w => { const o = users[w.user_id]; if (!o) return; if (w.seen) o.seen[w.movie_id] = true; if (w.rating) o.ratings[w.movie_id] = w.rating; });
   b.sends.forEach(x => { const out = x.from_id === uid, fid = out ? x.to_id : x.from_id, e = exGet(u, fid, x.day); (out ? e.me : e.them).push(x.movie_id); if (!out && x.handled) u.inboxDone[fid + ':' + x.day + ':' + x.movie_id] = 1; });
   u.events = b.events.map(e => ({ id: e.id, title: e.title, date: e.date, host: e.host_id, guests: e.event_guests.map(g => g.user_id), cands: e.cands, votes: Object.fromEntries(e.votes.map(v => [v.user_id, v.movie_id])), winner: e.winner }));
   DB = { users, session: uid };
+  /* first sign-in with Google: use the Google photo (null = never chosen; '' = user picked initials) */
+  if (b.me.avatar_url == null && googlePic) { u.avatar = googlePic; setTimeout(() => bg(() => CL.updateProfile({ avatar_url: googlePic })), 0); }
 }
 async function fillMissingTitles() {
   if (!TMDB_LIVE) return;
@@ -450,7 +471,7 @@ function renderPills() {
   const u = me(); if (!u) return; const L = lvl(u.xp || 0), waiting = inbox(u).length;
   $('#lvPill').innerHTML = `${ic('bolt')}Lv ${L.l}`;
   $('#stPill').innerHTML = `${ic('flame')}${flames(u)}`;
-  $('#dSub').textContent = waiting ? `${pl(waiting, 'film', 'films')} from friends waiting` : 'Right = want it · Left = skip';
+  $('#dSub').textContent = waiting ? `${pl(waiting, 'film', 'films')} from friends waiting` : '';
 }
 $('#lvPill').onclick = $('#stPill').onclick = () => progressSheet();
 const topCard = () => deck.querySelector('.card:last-child');
@@ -723,7 +744,7 @@ function renderFriendList() {
   const u = me(), fr = u.friends.map(U).filter(Boolean).map(f => ({ f, st: fstate(u, f.id), m: matches(u, f).length })).sort((a, b) => (b.st.risk - a.st.risk) || b.st.s - a.st.s || b.m - a.m);
   $('#flist').innerHTML = `<h2>Your friends · ${fr.length}<span class="small" style="font-weight:500">Streak</span></h2>
   <div class="group">${fr.map(({ f, st, m }) => `<div class="row" data-f="${esc(f.id)}" role="button" tabindex="0">${av(f)}<div class="grow"><div class="t">${esc(f.name)}</div><div class="status ${st.cls}">${esc(st.label)}</div></div>${fsPill(st)}<button class="add ${st.mine ? '' : 'on'}" data-send="${esc(f.id)}" aria-label="Send a film to ${esc(first(f))}">${ic('send')}</button></div>`).join('') || '<div class="row muted">No friends yet. Search above to add someone.</div>'}</div>
-  <p class="small" style="margin:10px 4px">Send each other at least one film every day and the flame grows. The hourglass means the streak ends at midnight unless you both send. ${CLOUD ? '' : 'Friends here are demo accounts and reply after a few seconds.'}</p>`;
+  <p class="small" style="margin:10px 4px">Send each other a film every day to keep the flame. ${ic('hourglass')} = it ends tonight.</p>`;
   $$('#flist [data-f]').forEach(b => b.onclick = () => friendSheet(b.dataset.f));
   $$('#flist [data-send]').forEach(b => b.onclick = e => { e.stopPropagation(); pickFilmSheet(b.dataset.send); });
 }
@@ -884,9 +905,12 @@ function renderPlan() {
   const byDate = {}; u.events.forEach(e => (byDate[e.date] = byDate[e.date] || []).push(e));
   const strip = [...Array(14)].map((_, i) => { const d = addDays(midnight(), i), k = dkey(d), dw = d.getDay();
     return `<button class="${dw === 0 || dw === 6 ? 'we' : ''} ${byDate[k] ? 'has' : ''}" data-day="${k}" aria-label="${fmtDate(k)}${byDate[k] ? ', has a plan' : ''}">${d.toLocaleDateString('en-GB', { weekday: 'short' })}<b>${d.getDate()}</b><i></i></button>`; }).join('');
-  $('#v-plan').innerHTML = `<div class="top"><div><h1>Weekend</h1><div class="sub">Suggest, vote, watch.</div></div><button class="btn sm" id="newEv">${ic('plus')}New</button></div>
+  $('#v-plan').innerHTML = `<div class="top"><div><h1>Calendar</h1><div class="sub">Movie nights and your own plans.</div></div><button class="btn sm" id="newEv">${ic('plus')}New</button></div>
   <div class="strip" id="strip">${strip}</div>
   ${u.events.slice().sort((a, b) => a.date < b.date ? -1 : 1).map(ev => {
+    if (isSolo(ev)) { const m = M[ev.cands[0]];
+      return `<article class="ev" id="ev-${ev.id}"><div class="sc"><span class="mini lg">${m ? poster(m) : ''}</span><div class="grow"><div class="small" style="text-transform:uppercase;letter-spacing:.06em">Just you</div><div class="et">${esc(m ? m.t : ev.title)}</div><div class="when">${fmtDate(ev.date)}</div></div><span class="cd">${countdown(ev.date)}</span></div>
+      <div style="display:flex;gap:8px;margin-top:12px"><button class="btn wide" data-solo-seen="${ev.id}">${ic('eye')}Watched it</button><button class="btn alt" data-solo-move="${esc(ev.cands[0])}">Move</button><button class="btn alt" data-del="${ev.id}" aria-label="Remove">${ic('x')}</button></div></article>`; }
     const c = tally(ev), total = Object.values(c).reduce((a, b) => a + b, 0) || 1, people = [ev.host, ...ev.guests].map(U).filter(Boolean);
     return `<article class="ev" id="ev-${ev.id}" data-ev="${ev.id}"><div class="head"><div><div class="et">${esc(ev.title)}</div><div class="when">${fmtDate(ev.date)} · hosted by ${esc(first(U(ev.host)))}</div></div><span class="cd">${countdown(ev.date)}</span></div>
     <div class="avs" style="margin-top:10px">${people.map(p => av(p, 'sm')).join('')}</div>
@@ -895,13 +919,15 @@ function renderPlan() {
     ${ev.winner && M[ev.winner] ? `<div class="winner">${ic('trophy')}You're watching ${esc(M[ev.winner].t)}</div>` : ''}
     <div style="display:flex;gap:8px;margin-top:12px"><button class="btn wide" data-decide="${ev.id}">${ic('coin')}${ev.winner ? 'Decide again' : 'Decide'}</button>${ev.host === u.id ? `<button class="btn alt" data-del="${ev.id}">Delete</button>` : ''}</div>
     <p class="small" style="margin:8px 2px 0">${ev.votes[u.id] ? 'Tap another title to change your vote.' : 'Tap a title to vote.'} A tie is settled by a coin flip.</p></article>`;
-  }).join('') || '<div class="group"><div class="row muted">No plans yet. Tap a day above or New.</div></div>'}
+  }).join('') || '<div class="group"><div class="row muted">Nothing planned. Tap a day to start a movie night, or hold a title in Profile → Want to watch.</div></div>'}
   ${CLOUD ? '' : `<p class="small" style="margin:10px 4px">Friends' votes are simulated in demo mode.</p>`}`;
   $('#newEv').onclick = () => openTogether();
   $$('#strip [data-day]').forEach(b => b.onclick = () => { const k = b.dataset.day; if (byDate[k]) $('#ev-' + byDate[k][0].id).scrollIntoView({ behavior: RM.matches ? 'auto' : 'smooth', block: 'start' }); else openTogether([], k); });
   $$('[data-vote]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.closest('.ev').dataset.ev); ev.votes[u.id] = b.dataset.vote; ev.winner = null; save(); bg(() => CL.vote(ev.id, b.dataset.vote)); renderPlan(); });
   $$('[data-decide]').forEach(b => b.onclick = () => decide(u.events.find(e => e.id === b.dataset.decide)));
-  $$('[data-del]').forEach(b => b.onclick = () => { const did = b.dataset.del; u.events = u.events.filter(e => e.id !== did); save(); bg(() => CL.deleteEvent(did)); renderPlan(); toast('Plan deleted'); });
+  $$('[data-solo-seen]').forEach(b => b.onclick = () => { const ev = u.events.find(e => e.id === b.dataset.soloSeen); setSeen(ev.cands[0], true); removeEvent(ev.id); renderProfile(); toast('Marked as watched. Rate it in Profile'); });
+  $$('[data-solo-move]').forEach(b => b.onclick = () => planSheet(b.dataset.soloMove));
+  $$('[data-del]').forEach(b => b.onclick = () => { removeEvent(b.dataset.del); renderProfile(); toast('Removed from your calendar'); });
 }
 async function decide(ev) {
   const c = tally(ev), max = Math.max(...Object.values(c)); let tied = ev.cands.filter(id => c[id] === max && M[id]);
@@ -925,59 +951,143 @@ function flip(a, b) {
 }
 
 /* ---------- profile ---------- */
-let libF = 'all';
+let libF = 'want';
+const isSolo = e => !e.guests.length && e.cands.length === 1;
+const soloPlan = (u, id) => u.events.find(e => isSolo(e) && e.cands[0] === id && e.date >= today());
+const fmtShort = k => new Date(k + 'T00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+function libLists(u) {
+  const all = [...new Set([...u.likes, ...Object.keys(u.seen || {})])].filter(id => M[id]);
+  return { want: all.filter(id => !u.seen[id]), rate: all.filter(id => u.seen[id] && !u.ratings[id]), seen: all.filter(id => u.seen[id]) };
+}
 function renderProfile() {
   const u = me(); if (!u) return; u.seen = u.seen || {}; u.ratings = u.ratings || {};
-  const liked = u.likes.filter(id => M[id]), seenN = liked.filter(id => u.seen[id]).length;
-  const rated = Object.entries(u.ratings).filter(([, r]) => r), avg = rated.length ? (rated.reduce((a, [, r]) => a + r, 0) / rated.length).toFixed(1) : '–';
-  const pass = id => libF === 'all' || (libF === 'seen' ? u.seen[id] : !u.seen[id]);
-  const groups = {}; liked.filter(pass).forEach(id => { const g = M[id].g[0]; (groups[g] = groups[g] || []).push(id); });
+  const L = libLists(u), list = L[libF];
+  const rated = Object.values(u.ratings).filter(Boolean), avg = rated.length ? (rated.reduce((a, r) => a + r, 0) / rated.length).toFixed(1) : '–';
+  const groups = {}; list.forEach(id => { const g = M[id].g[0]; (groups[g] = groups[g] || []).push(id); });
   const order = Object.keys(groups).sort((a, b) => groups[b].length - groups[a].length);
-  const best = u.friends.map(U).filter(Boolean).reduce((b, f) => { const s = fstreak(u, f.id); return s > b.s ? { f, s } : b; }, { f: null, s: 0 });
-  $('#v-profile').innerHTML = `<div class="top"><h1>Profile</h1></div>
-  <div class="phead">${av(u, 'lg')}<div><div class="pn">${esc(u.name)}</div><div class="small">${esc(u.email || '')}${u.provider === 'google' ? ' · Google' : ''}</div></div></div>
+  const empty = { want: 'Swipe right on titles you want to see.', rate: 'Nothing to rate. Watched titles without stars land here.', seen: 'Double-tap a poster, or tap the eye on a title, to fill this list.' }[libF];
+  const tip = { want: 'Hold a title to put it in your calendar.', rate: 'Tap the stars to rate.', seen: '' }[libF];
+  const row = id => {
+    const m = M[id], s = !!u.seen[id], r = u.ratings[id] || 0, plan = !s && soloPlan(u, id);
+    return `<div class="row ${s ? '' : 'lp'}" ${s ? '' : `data-lp="${id}"`}><span class="mini">${poster(m)}</span><div class="grow"><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.y)}</div>
+      ${s ? `<div class="stars" aria-label="Rating">${[1, 2, 3, 4, 5].map(i => `<button data-r="${id}" data-n="${i}" aria-label="${i} stars">${ic(i <= r ? 'star-fill' : 'star')}</button>`).join('')}</div>` : plan ? `<div class="planned">${ic('calendar')}${fmtShort(plan.date)}</div>` : ''}</div>
+      <div class="acts">${s ? `<button class="add on" data-s="${id}" aria-label="Watched, tap to undo">${ic('check')}</button>` : `<button class="add" data-s="${id}" aria-label="Mark as watched">${ic('eye')}</button><button class="add ${plan ? 'on' : ''}" data-plan="${id}" aria-label="Plan in calendar">${ic('calendar')}</button>`}<button class="add" data-sendm="${id}" aria-label="Send to a friend">${ic('send')}</button></div></div>`;
+  };
+  $('#v-profile').innerHTML = `<div class="top" style="align-items:center"><h1>Profile</h1><button class="iconbtn" id="gear" aria-label="Settings">${ic('gear')}</button></div>
+  <div class="phead">${av(u, 'lg')}<div><div class="pn">${esc(u.name)}</div><div class="small">${esc(u.handle || u.id)}${u.provider === 'google' ? ' · Google' : ''}</div></div></div>
   <button class="group" id="pLvl" style="width:100%;text-align:left;display:block">${levelBlock(u)}</button>
-  <div class="stats" style="margin-top:10px"><div class="stat"><b>${liked.length}</b><span class="small">want to see</span></div><div class="stat"><b>${seenN}</b><span class="small">watched</span></div><div class="stat"><b>${avg}</b><span class="small">avg rating</span></div></div>
-  ${best.f ? `<div class="group" style="margin-top:10px"><div class="row">${ic('flame', 'muted')}<span class="grow">Longest friend streak</span><b>${esc(first(best.f))} · ${pl(best.s, 'day', 'days')}</b></div></div>` : ''}
+  <div class="stats" style="margin-top:10px"><div class="stat"><b>${L.want.length}</b><span class="small">want to see</span></div><div class="stat"><b>${L.seen.length}</b><span class="small">watched</span></div><div class="stat"><b>${avg}</b><span class="small">avg rating</span></div></div>
   <h2>Your genres <button class="btn sm alt" id="edG">${ic('edit')}Edit</button></h2>
   <div class="chips">${(u.genres || []).map(g => `<span class="chip on">${esc(g)}</span>`).join('')}</div>
   <h2>Your library</h2>
-  <div class="seg" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">${[['all', 'All'], ['todo', 'To watch'], ['seen', 'Watched']].map(([k, t]) => `<button data-lf="${k}" class="${libF === k ? 'on' : ''}">${t}</button>`).join('')}</div>
+  <div class="seg lib3">${[['want', 'Want to watch', L.want.length], ['rate', 'To rate', L.rate.length], ['seen', 'Watched', L.seen.length]].map(([k, t, n]) => `<button data-lf="${k}" class="${libF === k ? 'on' : ''}"><span class="cnt">${n}</span>${t}</button>`).join('')}</div>
+  ${tip && list.length ? `<p class="small" style="margin:8px 4px 0">${tip}</p>` : ''}
   ${order.length ? order.map(g => `<div class="gh" style="margin:18px 4px 8px"><b>${esc(g)}</b><span class="small">${groups[g].length}</span>${(u.genres || []).includes(g) ? '' : `<span class="newg">${ic('star-fill')}New</span>`}</div>
-    <div class="group lib">${groups[g].map(id => { const m = M[id], s = !!u.seen[id], r = u.ratings[id] || 0;
-      return `<div class="row"><span class="mini">${poster(m)}</span><div class="grow"><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.y)}</div>
-      <div class="stars ${s ? '' : 'off'}" aria-label="Rating">${[1, 2, 3, 4, 5].map(i => `<button data-r="${id}" data-n="${i}" aria-label="${i} stars">${ic(i <= r ? 'star-fill' : 'star')}</button>`).join('')}</div></div>
-      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end"><button class="seen ${s ? 'on' : ''}" data-s="${id}">${ic(s ? 'check' : 'eye')}${s ? 'Watched' : 'Seen it?'}</button><button class="seen" data-sendm="${id}">${ic('send')}Send</button></div></div>`; }).join('')}</div>`).join('')
-    : `<div class="group"><div class="row muted">${liked.length ? 'Nothing in this filter.' : 'Swipe right on titles to build your library.'}</div></div>`}
-  <h2>Appearance</h2>
-  <div class="seg" style="grid-template-columns:repeat(3,1fr)">${[['system', 'monitor', 'Auto'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([k, i, t]) => `<button data-th="${k}" class="${prefs.theme === k ? 'on' : ''}">${ic(i)}${t}</button>`).join('')}</div>
-  <div class="group" style="margin-top:10px"><button class="row" id="crtT">${ic('crt', 'muted')}<span class="grow"><span class="t" style="display:block">CRT effect</span><span class="s">Scanlines, glow and the rolling refresh bar</span></span><span class="switch ${prefs.crt ? 'on' : ''}" role="switch" aria-checked="${prefs.crt}"></span></button>
-  <button class="row" id="hintR">${ic('hand', 'muted')}<span class="grow">Show the swipe tip again</span></button></div>
-  <h2>Account</h2>
-  <div class="group">
-   <button class="row" id="pId">${ic('copy', 'muted')}<span class="grow">Your ID</span><code style="font-weight:600">${esc(u.handle || u.id)}</code></button>
-   <div class="row">${ic(u.provider === 'google' ? 'google' : 'mail', 'muted')}<span class="grow">Sign-in method</span><span class="muted">${u.provider === 'google' ? 'Google' : 'Email'}</span></div>
-   <div class="row">${ic('key', 'muted')}<span class="grow">Your data</span><span class="muted">${CLOUD ? 'Synced to the cloud' : 'This device only (demo)'}</span></div>
-   <div class="row">${ic('film', 'muted')}<span class="grow">Catalog</span><span class="muted">${TMDB_LIVE ? 'TMDB live' : 'Demo catalog'}</span></div>
-   <div class="row">${ic('tv', 'muted')}<span class="grow">Running as</span><span class="muted">${N.native ? 'Android app' : 'Web app'}</span></div>
-   <button class="row" id="pOut">${ic('logout')}<span class="grow">Sign out</span></button>
-  </div>
-  <details style="margin-top:14px"><summary class="small" style="cursor:pointer;min-height:32px">Developer setup</summary>
-   <p class="small">Setup steps are in SETUP.md in the GitHub repo. Replace any icon in <code>icons/</code>.</p>
-   <div class="cfg">SUPABASE_URL:         ${CFG.SUPABASE_URL ? 'set' : '–'}\nServer reachable:     ${CLOUD ? 'yes' : 'no'}\nTMDB catalog:         ${TMDB_LIVE ? 'live' : 'demo'}\nGOOGLE_WEB_CLIENT_ID: ${CFG.GOOGLE_WEB_CLIENT_ID ? 'set' : '–'}\nDEMO_MODE:            ${!!CFG.DEMO_MODE}</div>
-  </details>`;
-  $('#pLvl').onclick = progressSheet; $('#edG').onclick = () => showOnboard(true);
-  $$('[data-th]').forEach(b => b.onclick = () => { prefs.theme = b.dataset.th; applyPrefs(); renderProfile(); });
-  $('#crtT').onclick = () => { prefs.crt = !prefs.crt; applyPrefs(); renderProfile(); };
-  $('#hintR').onclick = () => { setHintDone(false); go('discover'); toast('Tip shows if you wait 3 seconds'); };
-  $('#pId').onclick = () => copy(u.handle || u.id); $('#pOut').onclick = logout;
+    <div class="group lib">${groups[g].map(row).join('')}</div>`).join('')
+    : `<div class="group" style="margin-top:12px"><div class="row muted">${empty}</div></div>`}`;
+  $('#gear').onclick = settingsSheet; $('#pLvl').onclick = progressSheet; $('#edG').onclick = () => showOnboard(true);
   $$('[data-lf]').forEach(b => b.onclick = () => { libF = b.dataset.lf; renderProfile(); });
-  $$('[data-sendm]').forEach(b => b.onclick = () => sendSheet(b.dataset.sendm));
-  $$('[data-s]').forEach(b => b.onclick = () => { setSeen(b.dataset.s, !u.seen[b.dataset.s]); renderProfile(); });
-  $$('[data-r]').forEach(b => b.onclick = () => {
-    const id = b.dataset.r, n = +b.dataset.n; if (!u.seen[id]) return toast('Mark it as watched first, then rate it');
+  $$('#v-profile [data-sendm]').forEach(b => b.onclick = () => sendSheet(b.dataset.sendm));
+  $$('#v-profile [data-plan]').forEach(b => b.onclick = () => planSheet(b.dataset.plan));
+  $$('#v-profile [data-s]').forEach(b => b.onclick = () => { setSeen(b.dataset.s, !u.seen[b.dataset.s]); renderProfile(); });
+  $$('#v-profile [data-r]').forEach(b => b.onclick = () => {
+    const id = b.dataset.r, n = +b.dataset.n;
     u.ratings[id] = u.ratings[id] === n ? 0 : n; save(); bg(() => CL.setWatched(id, true, u.ratings[id])); renderProfile();
+    if (libF === 'rate' && u.ratings[id]) toast(`Rated ${M[id].t} ${n}/5 · moved to Watched`);
   });
+  $$('#v-profile [data-lp]').forEach(r => holdable(r, () => planSheet(r.dataset.lp)));
+}
+/* press and hold: highlight on pointer-down, fire after 480 ms unless the finger moves (scroll) */
+function holdable(el, fn) {
+  let t = 0, sx = 0, sy = 0;
+  const cancel = () => { clearTimeout(t); el.classList.remove('holding'); };
+  el.addEventListener('pointerdown', e => {
+    if (e.target.closest('button')) return; sx = e.clientX; sy = e.clientY; el.classList.add('holding');
+    t = setTimeout(() => { el.classList.remove('holding'); N.haptic('MEDIUM'); fn(); }, 480);
+  });
+  el.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(n => el.addEventListener(n, cancel));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+function planSheet(id) {
+  const u = me(), m = M[id], ex = soloPlan(u, id); let date = ex ? ex.date : nextSat();
+  openSheet(`<div class="shead"><b>${ex ? 'Move plan' : 'Plan to watch'}</b></div>
+   <div class="rec" style="padding:8px 0 12px"><span class="mini">${poster(m)}</span><div><div class="t">${esc(m.t)}</div><div class="s">${esc(m.k)} · ${esc(m.g.join(' · '))}${m.len ? ' · ' + esc(m.len) : ''}</div></div></div>
+   <div id="psCal"></div>
+   <button class="btn wide" id="psGo" style="margin-top:14px">${ic('calendar')}${ex ? 'Move to this day' : 'Add to my calendar'}</button>
+   ${ex ? `<button class="btn alt wide" id="psDel" style="margin-top:10px">Remove from calendar</button>` : ''}`, () => {
+    calendar($('#psCal'), date, k => { date = k; });
+    $('#psGo').onclick = () => savePlan(id, date, ex);
+    if (ex) $('#psDel').onclick = () => { removeEvent(ex.id); closeSheet(); renderProfile(); toast('Removed from your calendar'); };
+  });
+}
+async function savePlan(id, date, ex) {
+  const u = me(), m = M[id], btn = $('#psGo'); if (btn) btn.disabled = true;
+  try {
+    if (ex) { ex.date = date; save(); bg(() => CL.updateEvent(ex.id, { date })); }
+    else if (CLOUD) { const eid = await CL.createEvent(m.t.slice(0, 80), date, [id], []); await CL.setWinner(eid, id); await reloadCloud(); }
+    else { u.events.push({ id: 'p' + Date.now(), title: m.t.slice(0, 80), date, host: u.id, guests: [], cands: [id], votes: {}, winner: id }); save(); }
+  } catch (e) { if (btn) btn.disabled = false; return toast(e.message); }
+  closeSheet(); renderProfile(); renderPlan(); N.haptic('LIGHT'); toast(`${m.t} · ${fmtDate(date)}`);
+}
+function removeEvent(eid) { const u = me(); u.events = u.events.filter(e => e.id !== eid); save(); bg(() => CL.deleteEvent(eid)); renderPlan(); }
+
+/* ---------- settings (gear on Profile) ---------- */
+const COLORS = ['#9D0208', '#DC2F02', '#6A040F', '#370617', '#8E2A1A', '#2A2F4A'];
+async function shrinkPhoto(file) {
+  const bmp = await createImageBitmap(file), S = 192, c = document.createElement('canvas'); c.width = c.height = S;
+  const k = Math.max(S / bmp.width, S / bmp.height), w = bmp.width * k, h = bmp.height * k;
+  c.getContext('2d').drawImage(bmp, (S - w) / 2, (S - h) / 2, w, h);
+  return c.toDataURL('image/jpeg', .82);
+}
+function setAvatar(v) { const u = me(); u.avatar = v || ''; save(); bg(() => CL.updateProfile({ avatar_url: v || '' })); renderProfile(); renderFriends(); }
+function settingsSheet() {
+  const u = me();
+  const sw = on => `<span class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${on}"></span>`;
+  const draw = () => {
+    const src = !u.avatar ? 'Initials' : u.avatar === u.googlePic ? 'Google photo' : 'Your photo';
+    $('#sheetBody').innerHTML = `<div class="shead"><b>Settings</b></div>
+    <h2 style="margin-top:8px">Profile</h2>
+    <div class="group">
+     <div class="row">${av(u, 'lg')}<div class="grow"><div class="t">${esc(u.name)}</div><div class="s">${src}</div></div></div>
+     <label class="row" style="cursor:pointer">${ic('camera', 'muted')}<span class="grow">Upload a photo</span><input type="file" accept="image/*" id="avFile" hidden></label>
+     ${u.googlePic && u.avatar !== u.googlePic ? `<button class="row" id="avG">${ic('google', 'muted')}<span class="grow">Use my Google photo</span></button>` : ''}
+     ${u.avatar ? `<button class="row" id="avI">${ic('user', 'muted')}<span class="grow">Use initials instead</span></button>` : ''}
+    </div>
+    <label class="l">Colour behind your initials</label>
+    <div class="chips">${COLORS.map(c => `<button class="swatch ${u.color === c ? 'on' : ''}" data-col="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join('')}</div>
+    <label class="l" for="nmF">Name</label>
+    <div style="display:flex;gap:8px"><input class="field" id="nmF" value="${esc(u.name)}" maxlength="60" autocomplete="name"><button class="btn" id="nmS">Save</button></div>
+    <h2>Appearance</h2>
+    <div class="seg" style="grid-template-columns:repeat(3,1fr)">${[['system', 'monitor', 'Auto'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([k, i, t]) => `<button data-th="${k}" class="${prefs.theme === k ? 'on' : ''}">${ic(i)}${t}</button>`).join('')}</div>
+    <div class="group" style="margin-top:10px">
+     <button class="row" id="crtT">${ic('crt', 'muted')}<span class="grow"><span class="t" style="display:block">CRT effect</span><span class="s">Scanlines, glow and the refresh bar</span></span>${sw(prefs.crt)}</button>
+     <button class="row" id="sndT">${ic('sound', 'muted')}<span class="grow"><span class="t" style="display:block">Sound effects</span><span class="s">A chime when you earn XP</span></span>${sw(prefs.sound !== false)}</button>
+     <button class="row" id="hintR">${ic('hand', 'muted')}<span class="grow">Show the swipe tip again</span></button>
+    </div>
+    <h2>Account</h2>
+    <div class="group">
+     <button class="row" id="pId">${ic('copy', 'muted')}<span class="grow">Your ID</span><code style="font-weight:600">${esc(u.handle || u.id)}</code></button>
+     <div class="row">${ic(u.provider === 'google' ? 'google' : 'mail', 'muted')}<span class="grow">Sign-in</span><span class="muted">${u.provider === 'google' ? 'Google' : esc(u.email || 'Email')}</span></div>
+     <div class="row">${ic('key', 'muted')}<span class="grow">Your data</span><span class="muted">${CLOUD ? 'Synced to the cloud' : 'This device only'}</span></div>
+     <div class="row">${ic('film', 'muted')}<span class="grow">Catalog</span><span class="muted">${TMDB_LIVE ? 'TMDB live' : 'Demo catalog'}</span></div>
+     <button class="row" id="pOut">${ic('logout')}<span class="grow">Sign out</span></button>
+    </div>
+    <details style="margin-top:14px"><summary class="small" style="cursor:pointer;min-height:32px">Developer info</summary>
+     <div class="cfg">Server reachable:     ${CLOUD ? 'yes' : 'no'}\nTMDB catalog:         ${TMDB_LIVE ? 'live' : 'demo'}\nGOOGLE_WEB_CLIENT_ID: ${CFG.GOOGLE_WEB_CLIENT_ID ? 'set' : '–'}\nRunning as:           ${N.native ? 'Android app' : 'web'}</div>
+    </details>`;
+    $('#avFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { setAvatar(await shrinkPhoto(f)); draw(); toast('Profile photo updated'); } catch (x) { toast('Could not read that image'); } };
+    if ($('#avG')) $('#avG').onclick = () => { setAvatar(u.googlePic); draw(); };
+    if ($('#avI')) $('#avI').onclick = () => { setAvatar(''); draw(); };
+    $$('[data-col]').forEach(b => b.onclick = () => { u.color = b.dataset.col; save(); bg(() => CL.updateProfile({ color: u.color })); renderProfile(); renderFriends(); draw(); });
+    $('#nmS').onclick = () => { const n = $('#nmF').value.trim(); if (!n) return; u.name = n.slice(0, 60); save(); bg(() => CL.updateProfile({ name: u.name })); renderProfile(); draw(); toast('Name saved'); };
+    $$('[data-th]').forEach(b => b.onclick = () => { prefs.theme = b.dataset.th; applyPrefs(); draw(); });
+    $('#crtT').onclick = () => { prefs.crt = !prefs.crt; applyPrefs(); draw(); };
+    $('#sndT').onclick = () => { prefs.sound = prefs.sound === false; applyPrefs(); SFX.unlock(); setTimeout(() => SFX.xp(), 60); draw(); };
+    $('#hintR').onclick = () => { setHintDone(false); closeSheet(); go('discover'); toast('The tip shows if you wait 3 seconds'); };
+    $('#pId').onclick = () => copy(u.handle || u.id); $('#pOut').onclick = logout;
+  };
+  openSheet('', () => { draw(); $('#sheetBody').scrollTop = 0; });
 }
 
 function setSeen(id, v) {
