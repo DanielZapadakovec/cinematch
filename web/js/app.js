@@ -91,7 +91,7 @@ const KEY = 'cinematch-proto-v3';
 let DB;
 try { DB = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
 if (!DB || !DB.users) DB = { users: {}, session: null };
-DATA.MOCK.forEach(u => { DB.users[u.id] = { ...u, mock: true, skips: [], hist: {}, friends: [] }; });
+DATA.MOCK.forEach(u => { DB.users[u.id] = { ...u, mock: true, skips: [], hist: {}, friends: [], ratings: Object.fromEntries(u.likes.filter((_, i) => i % 2 === 0).map(id => [id, 3 + hash(u.id + id) % 3])) }; });
 const save = () => { if (CLOUD) return; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} };
 const me = () => DB.users[DB.session];
 const U = id => DB.users[id];
@@ -447,29 +447,53 @@ $('#obGo').onclick = () => {
 /* ---------- discover: deck & swipe ---------- */
 const deck = $('#deck');
 let queue = [], undoStack = [], anim = null, cx = 0, cy = 0, rotSign = 1, drag = null, busy = false;
-function buildQueue() { const u = me(), seen = new Set([...u.likes, ...u.skips]); queue = CATALOG.filter(m => !seen.has(m.id)).map(m => m.id); }
+/* ---------- what to show next: popularity + your genres + what friends liked and rated ---------- */
+function social(m) {
+  const u = me(), fr = u.friends.map(U).filter(Boolean);
+  const raters = fr.filter(f => ((f.ratings || {})[m.id] || 0) >= 4).sort((a, b) => b.ratings[m.id] - a.ratings[m.id]);
+  const likers = fr.filter(f => !raters.includes(f) && (f.likes.includes(m.id) || (f.seen || {})[m.id]));
+  return { raters, likers, people: [...raters, ...likers] };
+}
+function score(m) {
+  const s = social(m), fitN = fit(m).length;
+  const pop = m.pop ? Math.min(1.6, Math.log10(1 + m.pop) / 2.2) : Math.max(0, (m.r - 6) / 3);
+  const genre = fitN ? 1 + .25 * (fitN - 1) : 0;
+  const friends = s.likers.length * .8 + s.raters.reduce((a, f) => a + .6 + (f.ratings[m.id] - 3) * .9, 0);
+  return pop + genre * 1.3 + friends * 1.6 + (m.r || 0) / 20 + (hash(me().id + m.id) % 100) / 400;
+}
+/* best first, but every 6th card is a popular pick from outside your genres so the deck doesn't get stale */
+function rank(ids) {
+  const sc = ids.filter(id => M[id]).map(id => ({ id, s: score(M[id]), out: !fit(M[id]).length && !social(M[id]).people.length }));
+  const main = sc.filter(x => !x.out).sort((a, b) => b.s - a.s), explore = sc.filter(x => x.out).sort((a, b) => b.s - a.s), out = [];
+  for (let i = 0; main.length || explore.length; i++) out.push(((i % 6 === 5 && explore.length) || !main.length ? explore : main).shift().id);
+  return out;
+}
+function buildQueue() { const u = me(), seen = new Set([...u.likes, ...u.skips, ...Object.keys(u.seen || {})]); queue = rank(CATALOG.filter(m => !seen.has(m.id)).map(m => m.id)); }
+function socialTag(m) {
+  const s = social(m); if (!s.people.length) return '';
+  const lead = s.people[0], more = s.people.length - 1, r = s.raters.length ? s.raters[0].ratings[m.id] : 0;
+  const txt = r ? `<b>${esc(first(lead))}</b> rated it ${r}/5${more ? ` · +${more} friend${more > 1 ? 's' : ''}` : ''}` : `Liked by <b>${esc(first(lead))}</b>${more ? ` and ${more} other${more > 1 ? 's' : ''}` : ''}`;
+  return `<div class="social"><span class="avs">${s.people.slice(0, 3).map(p => av(p, 'sm')).join('')}</span><span>${txt}</span></div>`;
+}
 function cardHTML(m) {
   return `<div class="face">${poster(m)}<div class="dim"></div><div class="meta">
-  <div>${fitTag(m)}</div>
+  ${socialTag(m)}<div>${fitTag(m)}</div>
   <div class="ttl" style="margin-top:10px">${esc(m.t)}</div>
   <div class="attrs">${ic(m.k === 'Series' ? 'tv' : 'film')} <b>${esc(m.k)}</b> · ${esc(m.g.join(' / '))} · ${esc(m.y)}${m.len ? ' · ' + esc(m.len) : ''} · ${ic('star-fill')} <b>${esc(m.r)}</b></div>
-  <div class="dsc">${esc(m.d)}</div></div>
+  <div class="trailer" hidden></div><div class="dsc">${esc(m.d)}</div></div>
   <span class="stamp yes">WANT</span><span class="stamp no">SKIP</span><span class="stamp sn">SEEN IT</span></div>`;
 }
 function depth(el, i, p) { const d = Math.max(0, i - p); el.style.transform = `translate3d(0,0,0) scale(${1 - d * .06})`; el.querySelector('.dim').style.opacity = Math.min(1, d) * .6; }
 function renderDeck() {
   deck.innerHTML = ''; cx = cy = 0; anim && anim.stop(); anim = null; busy = false;
   const ids = queue.slice(0, 2);
-  $('#bSend').disabled = !ids.length; $('#bUndo').disabled = !undoStack.length;
+  $('#bSend').disabled = !ids.length;
   if (!ids.length) {
-    const skipped = me().skips.filter(id => M[id]).length;
     deck.innerHTML = `<div class="empty">${ic('popcorn')}<b>End of the reel</b><span class="muted">${TMDB_LIVE ? 'You have swiped everything loaded so far.' : 'You have seen the whole demo catalog.'}</span>
      ${TMDB_LIVE ? `<button class="btn" id="eMore">${ic('refresh')}Load more titles</button>` : ''}
-     ${skipped ? `<button class="btn alt" id="eSkip">${ic('undo')}Give ${pl(skipped, 'skipped title', 'skipped titles')} another look</button>` : ''}
      <button class="btn alt" id="eGo">${ic('group-plus')}Plan a movie night</button></div>`;
     $('#eGo').onclick = () => openTogether();
     if ($('#eMore')) $('#eMore').onclick = async () => { const b = $('#eMore'); b.disabled = true; b.innerHTML = `${ic('refresh')}Loading…`; await topUp(true); renderDeck(); };
-    if ($('#eSkip')) $('#eSkip').onclick = () => { queue = me().skips.filter(id => M[id]).reverse(); renderDeck(); };
     return renderPills();
   }
   ids.slice().reverse().forEach((id, ri) => { const i = ids.length - 1 - ri, el = document.createElement('div'); el.className = 'card'; el.dataset.id = id; el.innerHTML = cardHTML(M[id]); depth(el, i, 0); deck.appendChild(el); });
@@ -516,7 +540,7 @@ async function topUp(force) {
       if (!fresh.length) continue;
       setCatalog([...CATALOG, ...fresh]);
       const u = me(), seen = new Set([...u.likes, ...u.skips]), add = fresh.filter(m => !seen.has(m.id)).map(m => m.id);
-      queue.push(...add); if (add.length) return true;
+      queue.push(...rank(add)); if (add.length) return true;
     }
     return false;
   } catch (e) { if (force) toast('Could not load more: ' + e.message); return false; }
@@ -557,6 +581,20 @@ function commitSeen() {
     anim = spring({ from: cy, to: -H * 1.4, velocity: -1600, damping: 1, response: .45, onUpdate: v => { cy = v; paint(); if (cy < -H * 1.05) done(); }, onDone: done });
   }, 260);
 }
+async function loadTrailer(box, m) {
+  if (!box || !m || box.dataset.state || !TMDB_LIVE) return;
+  box.dataset.state = 'loading'; box.hidden = false; box.innerHTML = '<div class="tload">Finding the trailer…</div>';
+  const key = await TMDB.trailer(m);
+  if (!key) { box.innerHTML = '<div class="tload">No trailer found</div>'; return; }
+  const safe = encodeURIComponent(key);
+  box.dataset.state = 'ready';
+  box.innerHTML = `<button class="tplay" style="background-image:url('https://i.ytimg.com/vi/${safe}/hqdefault.jpg')" aria-label="Play trailer">${ic('play')}</button>
+    <a class="tyt" href="https://www.youtube.com/watch?v=${safe}" target="_blank" rel="noopener">${ic('youtube')}Open in YouTube</a>`;
+  box.querySelector('.tyt').onclick = e => { if (N.native) { e.preventDefault(); location.href = e.currentTarget.href; } };
+  box.querySelector('.tplay').onclick = () => {
+    box.querySelector('.tplay').outerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${safe}?autoplay=1&playsinline=1&rel=0&modestbranding=1&origin=${encodeURIComponent(location.origin)}" title="Trailer" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  };
+}
 function undo() {
   const h = undoStack.pop(); if (!h) return; const u = me(), arr = h.dir > 0 ? u.likes : u.skips;
   arr.splice(arr.lastIndexOf(h.id), 1); bg(() => CL.unswipe(h.id)); if (h.seen) setSeen(h.id, false); u.hist[today()] = Math.max(0, todayCount(u) - 1); save();
@@ -566,6 +604,7 @@ function undo() {
   animateTo(0, 0, 0, 0, .85, .45); renderFriends(); renderProfile();
 }
 deck.addEventListener('pointerdown', e => {
+  if (e.target.closest('.trailer')) return;
   const el = e.target.closest('.card'); if (!el || el !== topCard()) return;
   stopHint(); anim && anim.stop(); anim = null; busy = false; el.setPointerCapture(e.pointerId);
   const r = el.getBoundingClientRect(); rotSign = (e.clientY - r.top) < r.height * .6 ? 1 : -1;
@@ -587,7 +626,7 @@ const up = e => {
       clearTimeout(tapT); lastTap = null; commitSeen(); return;
     }
     lastTap = { el: d.el, t: now, x: e.clientX, y: e.clientY };
-    clearTimeout(tapT); tapT = setTimeout(() => { if (lastTap && lastTap.el === d.el) d.el.classList.toggle('info'); lastTap = null; }, 300);
+    clearTimeout(tapT); tapT = setTimeout(() => { if (lastTap && lastTap.el === d.el) { d.el.classList.toggle('info'); if (d.el.classList.contains('info')) loadTrailer(d.el.querySelector('.trailer'), M[d.el.dataset.id]); } lastTap = null; }, 300);
     return;
   }
   const v = d.t.vel(), W = deck.clientWidth, proj = cx + v.x * .2;
@@ -595,7 +634,6 @@ const up = e => {
   else animateTo(0, 0, v.x, v.y, Math.hypot(v.x, v.y) > 600 ? .75 : 1, .4);
 };
 deck.addEventListener('pointerup', up); deck.addEventListener('pointercancel', up);
-$('#bUndo').onclick = undo;
 $('#bSend').onclick = () => topCard() && sendSheet(topCard().dataset.id);
 
 /* first-run hint: if the user hasn't touched the deck within 3 s, nudge the card both ways once */
@@ -632,7 +670,6 @@ addEventListener('keydown', e => {
   if (/Arrow(Left|Right)/.test(e.key)) stopHint();
   if (e.key === 'ArrowRight' && !busy) { rotSign = 1; commit(1); }
   if (e.key === 'ArrowLeft' && !busy) { rotSign = 1; commit(-1); }
-  if (e.key === 'Backspace') undo();
 });
 
 /* ---------- sheet (draggable, interruptible) ---------- */
@@ -1058,6 +1095,7 @@ function movieSheet(id) {
       <div class="mt">${esc(m.t)}</div>
       <div class="attrs" style="color:var(--mute)">${esc(m.k)} · ${esc(m.y)}${m.len ? ' · ' + esc(m.len) : ''} · ${ic('star-fill')} ${esc(m.r)}</div>
       <div class="chips" style="margin-top:8px">${m.g.map(g => `<span class="chip ${ov.includes(g) ? 'on' : ''}" style="min-height:28px">${esc(g)}</span>`).join('')}</div></div></div>
+     <div class="trailer sheet-tr" hidden></div>
      <p class="about">${esc(m.d || 'No description yet.')}</p>
      ${s ? `<div class="group"><div class="row"><span class="grow t">Your rating</span>${stars(id, r, true)}</div></div>`
          : plan ? `<div class="winner" style="margin:0">${ic('calendar')}Planned for ${fmtDate(plan.date)}</div>` : ''}
@@ -1072,6 +1110,7 @@ function movieSheet(id) {
     $('#msSend').onclick = () => sendSheet(id);
     if ($('#msUnplan')) $('#msUnplan').onclick = () => { removeEvent(plan.id); renderProfile(); draw(); toast('Removed from your calendar'); };
     $$('#sheetBody [data-r]').forEach(b => b.onclick = () => { rate(id, +b.dataset.n); draw(); });
+    loadTrailer($('#sheetBody .trailer'), m);
   };
   openSheet('', draw);
 }

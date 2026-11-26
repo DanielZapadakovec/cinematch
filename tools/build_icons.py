@@ -147,7 +147,7 @@ PHOSPHOR = {
     'key': 'key', 'copy': 'copy', 'eye': 'eye', 'group-plus': 'film-slate', 'edit': 'pencil-simple', 'trophy': 'trophy',
     'shield': 'shield', 'send': 'paper-plane-tilt', 'hourglass': 'hourglass-medium', 'inbox': 'tray',
     'reply': 'arrow-bend-up-left', 'hand': 'hand-swipe-right', 'sun': 'sun', 'moon': 'moon', 'monitor': 'monitor',
-    'crt': 'television', 'gear': 'gear-six', 'camera': 'camera', 'user': 'user', 'sound': 'speaker-high', 'eye-off': 'eye-slash', 'refresh': 'arrows-clockwise',
+    'crt': 'television', 'gear': 'gear-six', 'camera': 'camera', 'user': 'user', 'sound': 'speaker-high', 'eye-off': 'eye-slash', 'refresh': 'arrows-clockwise', 'play': ('play', 'fill'), 'youtube': 'arrow-square-out',
     'g-action': 'sword', 'g-adventure': 'compass', 'g-animation': 'paint-brush', 'g-comedy': 'smiley', 'g-crime': 'fingerprint',
     'g-documentary': 'globe-hemisphere-west', 'g-drama': 'mask-sad', 'g-fantasy': 'magic-wand', 'g-history': 'scroll',
     'g-horror': 'ghost', 'g-musical': 'music-notes', 'g-mystery': 'detective', 'g-romance': 'heart', 'g-sci-fi': 'planet', 'g-thriller': 'eye',

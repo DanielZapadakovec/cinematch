@@ -53,6 +53,7 @@ window.TMDB = (() => {
       g: g.length ? g : ['Drama'],
       len: '',
       r: Math.round((item.vote_average || 0) * 10) / 10,
+      pop: item.popularity || 0,
       d: item.overview || '',
       poster: posterUrl(item.poster_path),
       c: [`hsl(${h} 45% 45%)`, `hsl(${h} 40% 10%)`],
@@ -88,6 +89,24 @@ window.TMDB = (() => {
     return [...a.results.map(i => map(i, 'movie')), ...b.results.map(i => map(i, 'tv'))].filter(m => m.poster);
   }
 
+  // YouTube key of the best trailer (official trailer > trailer > teaser). Works for demo titles too, by searching.
+  const trailers = {};
+  function trailer(m) {
+    if (trailers[m.id]) return trailers[m.id];
+    return trailers[m.id] = (async () => {
+      const type = m.k === 'Series' ? 'tv' : 'movie';
+      let id = m.tmdbId;
+      if (!id) {
+        const r = await get('/search/' + type, { query: m.t, ...(m.y ? (type === 'tv' ? { first_air_date_year: m.y } : { year: m.y }) : {}) });
+        id = r.results && r.results[0] && r.results[0].id; if (!id) return null;
+      }
+      const d = await get(`/${type}/${id}`, { append_to_response: 'videos', include_video_language: 'en,null' });
+      const v = ((d.videos && d.videos.results) || []).filter(x => x.site === 'YouTube');
+      const pick = v.find(x => x.type === 'Trailer' && x.official) || v.find(x => x.type === 'Trailer') || v.find(x => x.type === 'Teaser') || v[0];
+      return pick ? pick.key : null;
+    })().catch(() => { delete trailers[m.id]; return null; });
+  }
+
   // Titles referenced by friends / plans that are not in the loaded lists
   async function byIds(ids) {
     const out = [];
@@ -114,5 +133,5 @@ window.TMDB = (() => {
     return m;
   }
 
-  return { enabled, get, loadCatalog, more, byIds, details, posterUrl };
+  return { enabled, get, loadCatalog, more, trailer, byIds, details, posterUrl };
 })();
