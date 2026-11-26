@@ -477,10 +477,10 @@ function socialTag(m) {
 }
 function cardHTML(m) {
   return `<div class="face">${poster(m)}<div class="dim"></div><div class="meta">
-  ${socialTag(m)}<div>${fitTag(m)}</div>
+  <div class="trailer" hidden></div>${socialTag(m)}<div>${fitTag(m)}</div>
   <div class="ttl" style="margin-top:10px">${esc(m.t)}</div>
   <div class="attrs">${ic(m.k === 'Series' ? 'tv' : 'film')} <b>${esc(m.k)}</b> · ${esc(m.g.join(' / '))} · ${esc(m.y)}${m.len ? ' · ' + esc(m.len) : ''} · ${ic('star-fill')} <b>${esc(m.r)}</b></div>
-  <div class="trailer" hidden></div><div class="dsc">${esc(m.d)}</div></div>
+  <div class="dsc">${esc(m.d)}</div></div>
   <span class="stamp yes">WANT</span><span class="stamp no">SKIP</span><span class="stamp sn">SEEN IT</span></div>`;
 }
 function depth(el, i, p) { const d = Math.max(0, i - p); el.style.transform = `translate3d(0,0,0) scale(${1 - d * .06})`; el.querySelector('.dim').style.opacity = Math.min(1, d) * .6; }
@@ -581,10 +581,16 @@ function commitSeen() {
     anim = spring({ from: cy, to: -H * 1.4, velocity: -1600, damping: 1, response: .45, onUpdate: v => { cy = v; paint(); if (cy < -H * 1.05) done(); }, onDone: done });
   }, 260);
 }
+function toggleInfo(el) {
+  const open = el.classList.toggle('info'), box = el.querySelector('.trailer');
+  if (open) loadTrailer(box, M[el.dataset.id]);
+  else if (box) { box.hidden = true; box.innerHTML = ''; delete box.dataset.state; }
+}
 async function loadTrailer(box, m) {
   if (!box || !m || box.dataset.state || !TMDB_LIVE) return;
   box.dataset.state = 'loading'; box.hidden = false; box.innerHTML = '<div class="tload">Finding the trailer…</div>';
   const key = await TMDB.trailer(m);
+  if (box.dataset.state !== 'loading') return;
   if (!key) { box.innerHTML = '<div class="tload">No trailer found</div>'; return; }
   const safe = encodeURIComponent(key);
   box.dataset.state = 'ready';
@@ -626,7 +632,7 @@ const up = e => {
       clearTimeout(tapT); lastTap = null; commitSeen(); return;
     }
     lastTap = { el: d.el, t: now, x: e.clientX, y: e.clientY };
-    clearTimeout(tapT); tapT = setTimeout(() => { if (lastTap && lastTap.el === d.el) { d.el.classList.toggle('info'); if (d.el.classList.contains('info')) loadTrailer(d.el.querySelector('.trailer'), M[d.el.dataset.id]); } lastTap = null; }, 300);
+    clearTimeout(tapT); tapT = setTimeout(() => { if (lastTap && lastTap.el === d.el) toggleInfo(d.el); lastTap = null; }, 300);
     return;
   }
   const v = d.t.vel(), W = deck.clientWidth, proj = cx + v.x * .2;
